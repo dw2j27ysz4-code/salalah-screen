@@ -3,7 +3,10 @@
 import sys
 from core import client, webui
 
-APP_ID = "salalahscreen"
+# The launcher downloads a tile's icon only when the tile is first added; re-adding
+# an existing id updates its URL but keeps the old icon. The first tile
+# ("salalahscreen") was added without an image, hence a new id.
+APP_ID = "salalahtv"
 NAME = "شاشة صلالة"
 
 url = sys.argv[1]
