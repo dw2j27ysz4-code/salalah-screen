@@ -43,6 +43,7 @@
       } else if (m.t === 'move' && opts.onMove) opts.onMove(slot, m);
       else if (m.t === 'turn' && opts.onTurn) opts.onTurn(slot, m);
       else if (m.t === 'again' && opts.onAgain) opts.onAgain(slot);
+      else if (m.t !== 'hb' && opts.onInput) opts.onInput(slot, m); // game-specific inputs (steer, stick, fire)
     }, function () { render(); });
 
     function check() {

@@ -1,0 +1,256 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>سباق السيارات</title>
+  <link rel="stylesheet" href="games.css">
+  <script src="https://cdn.jsdelivr.net/npm/peerjs@1.5.4/dist/peerjs.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/mqtt@5.10.1/dist/mqtt.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/qrcode-generator@1.4.4/qrcode.min.js"></script>
+  <script src="link.js"></script>
+  <script src="lobby.js"></script>
+</head>
+<body class="tv">
+  <div id="hud">
+    <div class="score" id="s1"><span class="dotc gold"></span><b>0/3</b></div>
+    <div class="hud-title">سباق السيارات <span class="dim">· 3 لفّات</span></div>
+    <div class="score" id="s0"><b>0/3</b><span class="dotc cyan"></span></div>
+  </div>
+  <div id="stage"><canvas id="bg"></canvas><canvas id="fg"></canvas></div>
+  <div id="banner"></div>
+  <div id="lobby" class="lobby glass"></div>
+
+  <script>
+    // TV side of the car race: a top-down circuit, arcade physics. Cars accelerate on their
+    // own; phones send steering (-1..1, tilt or touch) and brake. Off the asphalt is slow.
+    (function () {
+      'use strict';
+      var W = 1600, H = 900, TRACK_W = 150, LAPS = 3, CAR_R = 22;
+      var MAX_SPEED = 560, OFF_SPEED = 230, ACCEL = 380, BRAKE = 1100, TURN = 2.7;
+      var COLORS = ['#5fd0ff', '#f6cf6a'];
+
+      // Circuit centreline: closed Catmull-Rom spline through these points (table units).
+      var CTRL = [[300, 700], [180, 450], [330, 170], [640, 140], [800, 330], [980, 150], [1310, 160],
+        [1450, 380], [1290, 560], [1420, 760], [1100, 790], [800, 640], [560, 790]];
+      var PATH = sampleSpline(CTRL, 520), N = PATH.length;
+
+      var cars = null, phase = 'lobby', phaseEnd = 0, finished = [];
+
+      var lobby = Lobby.create({
+        game: 'race',
+        title: 'سباق السيارات',
+        hint: 'أمِل الجوال للتوجيه، أو المس نصف الشاشة الأيمن/الأيسر · المس الاثنين للفرامل',
+        slots: [{ name: 'الأزرق', color: COLORS[0] }, { name: 'الذهبي', color: COLORS[1] }],
+        onInput: function (slot, m) {
+          if (m.t !== 'steer' || !cars) return;
+          cars[slot].steer = Math.max(-1, Math.min(1, +m.s || 0));
+          cars[slot].brake = !!m.b;
+        },
+        onReady: function () { newRace(); },
+        onAgain: function () { if (phase === 'over') newRace(); },
+        onLeft: function () { phase = 'lobby'; },
+      });
+
+      function sampleSpline(pts, n) {
+        var out = [], m = pts.length;
+        for (var i = 0; i < n; i++) {
+          var t = i / n * m, k = Math.floor(t), u = t - k;
+          var p0 = pts[(k - 1 + m) % m], p1 = pts[k % m], p2 = pts[(k + 1) % m], p3 = pts[(k + 2) % m];
+          var u2 = u * u, u3 = u2 * u;
+          out.push([0, 1].map(function (j) {
+            return 0.5 * (2 * p1[j] + (-p0[j] + p2[j]) * u + (2 * p0[j] - 5 * p1[j] + 4 * p2[j] - p3[j]) * u2 + (-p0[j] + 3 * p1[j] - 3 * p2[j] + p3[j]) * u3);
+          }));
+        }
+        return out;
+      }
+
+      function newRace() {
+        // Grid just past the line, so the first crossing is the end of lap 1.
+        var START = 6, a = PATH[START], b = PATH[START + 3], ang = Math.atan2(b[1] - a[1], b[0] - a[0]);
+        var nx = -Math.sin(ang), ny = Math.cos(ang);
+        cars = [0, 1].map(function (i) {
+          var off = (i === 0 ? -1 : 1) * 38;
+          return { x: a[0] + nx * off, y: a[1] + ny * off, a: ang, v: 0,
+            steer: 0, brake: false, idx: START, lap: 0, done: false };
+        });
+        finished = [];
+        showLaps();
+        phase = 'countdown'; phaseEnd = Date.now() + 3000;
+        lobby.broadcast({ t: 'state', phase: 'play' });
+      }
+
+      // Nearest centreline sample, searched around the last known one (cars move a few per frame).
+      function nearest(c) {
+        var best = c.idx, bd = Infinity;
+        for (var k = -25; k <= 25; k++) {
+          var i = (c.idx + k + N) % N, dx = PATH[i][0] - c.x, dy = PATH[i][1] - c.y, d = dx * dx + dy * dy;
+          if (d < bd) { bd = d; best = i; }
+        }
+        return [best, Math.sqrt(bd)];
+      }
+
+      function step(dt) {
+        cars.forEach(function (c, i) {
+          if (c.done) { c.v *= 0.96; }
+          var near = nearest(c), onTrack = near[1] < TRACK_W / 2;
+          var top = onTrack ? MAX_SPEED : OFF_SPEED;
+          if (!c.done) {
+            if (c.brake) c.v -= BRAKE * dt; else c.v += ACCEL * dt;
+          }
+          if (c.v > top) c.v -= (onTrack ? 300 : 900) * dt;
+          c.v = Math.max(0, c.v);
+          c.a += c.steer * TURN * dt * Math.min(1, c.v / 160);
+          c.x += Math.cos(c.a) * c.v * dt; c.y += Math.sin(c.a) * c.v * dt;
+          c.x = Math.max(CAR_R, Math.min(W - CAR_R, c.x)); c.y = Math.max(CAR_R, Math.min(H - CAR_R, c.y));
+          // Laps: crossing sample 0 forwards counts, backwards un-counts (no shortcut by reversing).
+          var prev = c.idx; c.idx = near[0];
+          if (prev > N * 0.85 && c.idx < N * 0.15) lapDone(c, i);
+          else if (prev < N * 0.15 && c.idx > N * 0.85) c.lap = Math.max(0, c.lap - 1);
+        });
+        // Car-to-car bump.
+        var A = cars[0], B = cars[1], dx = B.x - A.x, dy = B.y - A.y, d = Math.sqrt(dx * dx + dy * dy);
+        if (d > 0 && d < CAR_R * 2) {
+          var push = (CAR_R * 2 - d) / 2, ux = dx / d, uy = dy / d;
+          A.x -= ux * push; A.y -= uy * push; B.x += ux * push; B.y += uy * push;
+          A.v *= 0.9; B.v *= 0.9;
+          if (Date.now() - lastBump > 400) { lastBump = Date.now(); sound(120, 0.12); lobby.send(0, { t: 'buzz', ms: 40 }); lobby.send(1, { t: 'buzz', ms: 40 }); }
+        }
+      }
+      var lastBump = 0;
+
+      function lapDone(c, i) {
+        if (c.done) return;
+        c.lap++; showLaps();
+        sound(660, 0.15);
+        lobby.send(i, { t: 'buzz', ms: 60 });
+        if (c.lap >= LAPS) {
+          c.done = true; finished.push(i);
+          if (finished.length === 1) {
+            banner((i === 0 ? 'الأزرق' : 'الذهبي') + ' يفوز!', COLORS[i], 0);
+            phase = 'over';
+            lobby.broadcast({ t: 'state', phase: 'over', winner: i });
+          }
+        } else if (c.lap === LAPS - 1) {
+          banner('اللفة الأخيرة', COLORS[i], 1200);
+        }
+      }
+
+      // ---- Rendering ----
+      var bg = document.getElementById('bg'), fg = document.getElementById('fg'), ctx = fg.getContext('2d'), scale = 1, sprites = [];
+
+      function layout() {
+        var stage = document.getElementById('stage').getBoundingClientRect(), res = 0.8;
+        scale = Math.min(stage.width / W, stage.height / H) * res;
+        [bg, fg].forEach(function (c) {
+          c.width = Math.round(W * scale); c.height = Math.round(H * scale);
+          c.style.width = (c.width / res) + 'px'; c.style.height = (c.height / res) + 'px';
+        });
+        drawTrack();
+        sprites = COLORS.map(carSprite);
+      }
+
+      function strokePath(g, width, style, dash) {
+        g.beginPath();
+        PATH.forEach(function (p, i) { if (i) g.lineTo(p[0], p[1]); else g.moveTo(p[0], p[1]); });
+        g.closePath();
+        g.lineWidth = width; g.strokeStyle = style; g.lineJoin = 'round';
+        g.setLineDash(dash || []); g.stroke(); g.setLineDash([]);
+      }
+
+      function drawTrack() {
+        var g = bg.getContext('2d');
+        g.setTransform(scale, 0, 0, scale, 0, 0);
+        g.clearRect(0, 0, W, H);
+        var surf = g.createLinearGradient(0, 0, 0, H);
+        surf.addColorStop(0, 'rgba(255,255,255,0.10)'); surf.addColorStop(1, 'rgba(255,255,255,0.03)');
+        g.fillStyle = surf; g.fillRect(0, 0, W, H);
+        strokePath(g, TRACK_W + 16, 'rgba(255,255,255,0.85)', [26, 26]);  // kerbs
+        strokePath(g, TRACK_W + 16, 'rgba(214,64,52,0.85)', [0, 26, 26, 0]);
+        strokePath(g, TRACK_W, '#2c2d32');                                  // asphalt
+        strokePath(g, 3, 'rgba(255,255,255,0.35)', [30, 30]);              // centre dashes
+        // Start/finish chequer across the track at sample 0.
+        var a = PATH[0], b = PATH[3], ang = Math.atan2(b[1] - a[1], b[0] - a[0]);
+        g.save(); g.translate(a[0], a[1]); g.rotate(ang);
+        for (var r = 0; r < 2; r++) for (var k = -5; k < 5; k++) {
+          g.fillStyle = (r + k) % 2 ? '#ffffff' : '#111111';
+          g.fillRect(r * 15 - 15, k * 15, 15, 15);
+        }
+        g.restore();
+      }
+
+      function carSprite(color) {
+        var w = 52 * scale, h = 30 * scale, pad = 18 * scale, c = document.createElement('canvas');
+        c.width = Math.ceil(w + pad * 2); c.height = Math.ceil(h + pad * 2);
+        var g = c.getContext('2d'), x = pad, y = pad;
+        g.shadowColor = color; g.shadowBlur = pad * 0.9; g.fillStyle = color;
+        roundRect(g, x, y, w, h, h * 0.35); g.fill(); g.shadowBlur = 0;
+        g.fillStyle = 'rgba(20,24,40,0.75)'; roundRect(g, x + w * 0.42, y + h * 0.18, w * 0.3, h * 0.64, h * 0.15); g.fill(); // windscreen
+        g.fillStyle = 'rgba(255,255,255,0.8)'; g.fillRect(x + w - 4 * scale, y + h * 0.15, 3 * scale, h * 0.2); g.fillRect(x + w - 4 * scale, y + h * 0.65, 3 * scale, h * 0.2);
+        return c;
+      }
+      function roundRect(g, x, y, w, h, r) {
+        g.beginPath(); g.moveTo(x + r, y); g.arcTo(x + w, y, x + w, y + h, r); g.arcTo(x + w, y + h, x, y + h, r);
+        g.arcTo(x, y + h, x, y, r); g.arcTo(x, y, x + w, y, r); g.closePath();
+      }
+
+      function render() {
+        ctx.setTransform(1, 0, 0, 1, 0, 0);
+        ctx.clearRect(0, 0, fg.width, fg.height);
+        if (!cars) return;
+        cars.forEach(function (c, i) {
+          var s = sprites[i];
+          ctx.save(); ctx.translate(c.x * scale, c.y * scale); ctx.rotate(c.a);
+          ctx.drawImage(s, -s.width / 2, -s.height / 2); ctx.restore();
+        });
+        if (phase === 'countdown') {
+          var n = Math.max(1, Math.ceil((phaseEnd - Date.now()) / 1000));
+          ctx.fillStyle = 'rgba(255,255,255,0.9)'; ctx.font = '700 ' + (150 * scale) + 'px Tajawal, sans-serif'; ctx.textAlign = 'center';
+          ctx.fillText(String(n), fg.width / 2, fg.height * 0.55);
+        }
+      }
+
+      var last = performance.now(), acc = 0, STEP = 1 / 120;
+      function frame(now) {
+        acc += Math.min(0.1, (now - last) / 1000); last = now;
+        if (phase === 'countdown' && Date.now() >= phaseEnd) phase = 'play';
+        while (acc >= STEP) { if (cars && (phase === 'play' || phase === 'over')) step(STEP); acc -= STEP; }
+        render();
+        requestAnimationFrame(frame);
+      }
+
+      function showLaps() {
+        [0, 1].forEach(function (i) {
+          document.querySelector('#s' + i + ' b').textContent = Math.min(LAPS, cars ? cars[i].lap : 0) + '/' + LAPS;
+        });
+      }
+      var bannerTimer = null;
+      function banner(html, color, ms) {
+        var b = document.getElementById('banner');
+        b.innerHTML = html + (ms ? '' : '<small>اضغط «مباراة جديدة» على الجوال</small>'); b.style.color = color; b.className = 'show';
+        clearTimeout(bannerTimer);
+        if (ms) bannerTimer = setTimeout(function () { b.className = ''; }, ms);
+      }
+      lobby.onHide = function () { document.getElementById('banner').className = ''; };
+
+      var audio = null;
+      function sound(freq, dur) {
+        try {
+          audio = audio || new (window.AudioContext || window.webkitAudioContext)();
+          if (audio.state === 'suspended') audio.resume();
+          var o = audio.createOscillator(), g = audio.createGain(), t = audio.currentTime;
+          o.type = 'triangle'; o.frequency.value = freq;
+          g.gain.setValueAtTime(0.16, t); g.gain.exponentialRampToValueAtTime(0.001, t + dur);
+          o.connect(g); g.connect(audio.destination); o.start(t); o.stop(t + dur);
+        } catch (e) { /* no audio */ }
+      }
+
+      window.raceState = function () { return JSON.parse(JSON.stringify({ phase: phase, cars: cars, finished: finished })); };
+
+      layout();
+      window.addEventListener('resize', layout);
+      requestAnimationFrame(frame);
+    })();
+  </script>
+</body>
+</html>

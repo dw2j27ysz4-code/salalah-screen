@@ -29,6 +29,24 @@
     #turns button.on { background: rgba(255,255,255,.45); }
     #turns .u { grid-column: 2; grid-row: 1; } #turns .l { grid-column: 1; grid-row: 2; }
     #turns .r { grid-column: 3; grid-row: 2; } #turns .d { grid-column: 2; grid-row: 3; }
+    /* Race: two halves to steer (both = brake); tilt steering when the phone allows it. */
+    #race { position: fixed; left: 0; right: 0; bottom: 0; top: 90px; display: none; direction: ltr; gap: 12px; padding: 12px; }
+    #race div { flex: 1; border-radius: 28px; border: 1px solid rgba(255,255,255,.25); display: flex; align-items: center; justify-content: center;
+      font-size: 54px; background: linear-gradient(180deg, rgba(255,255,255,.16), rgba(255,255,255,.05)); }
+    #race div.on { background: rgba(255,255,255,.42); }
+    #tilt { position: fixed; left: 50%; top: 92px; transform: translateX(-50%); display: none; z-index: 2;
+      font-size: 15px; font-family: inherit; color: #fff; background: rgba(255,255,255,.18); border: 1px solid rgba(255,255,255,.3); border-radius: 999px; padding: 8px 18px; }
+    /* Tank: joystick appears where the left thumb lands; fire button on the right. */
+    #tank { position: fixed; left: 0; right: 0; bottom: 0; top: 90px; display: none; direction: ltr; }
+    #stickZone { position: absolute; left: 0; top: 0; bottom: 0; width: 58%; display: flex; align-items: center; justify-content: center; }
+    #stickZone::before { content: 'ضع إبهامك هنا للتحريك'; color: rgba(255,255,255,.4); font-size: 15px; padding: 70px 18px;
+      border: 2px dashed rgba(255,255,255,.18); border-radius: 50%; width: 150px; text-align: center; direction: rtl; }
+    #stickBase, #stickKnob { position: absolute; border-radius: 50%; display: none; pointer-events: none; }
+    #stickBase { width: 150px; height: 150px; margin: -75px 0 0 -75px; border: 2px solid rgba(255,255,255,.35); background: rgba(255,255,255,.08); }
+    #stickKnob { width: 70px; height: 70px; margin: -35px 0 0 -35px; }
+    #fire { position: absolute; right: 18px; top: 50%; width: 36%; aspect-ratio: 1; transform: translateY(-50%); border-radius: 50%;
+      border: 0; font-size: 26px; font-weight: 800; font-family: inherit; color: #1a1330; }
+    #fire.on { filter: brightness(1.3); transform: translateY(-50%) scale(.94); }
     #again { position: fixed; left: 50%; bottom: max(24px, env(safe-area-inset-bottom)); transform: translateX(-50%); display: none;
       font-weight: 700; font-size: 20px; font-family: inherit; color: #1a1330; background: #f6cf6a; border: 0; border-radius: 999px; padding: 14px 34px; }
   </style>
@@ -44,14 +62,23 @@
     <button class="u" data-d="u">▲</button><button class="l" data-d="l">◀</button>
     <button class="r" data-d="r">▶</button><button class="d" data-d="d">▼</button>
   </div>
+  <div id="race"><div id="rl">◀</div><div id="rr">▶</div></div>
+  <button id="tilt">التوجيه بإمالة الجوال</button>
+  <div id="tank"><div id="stickZone"></div><div id="stickBase"></div><div id="stickKnob"></div><button id="fire">إطلاق</button></div>
   <button id="again">مباراة جديدة</button>
   <script>
-    // Phone controller for the TV games. ?game=hockey streams the finger position inside a
-    // picture of your half of the table; ?game=trail sends left/right turns.
+    // Phone controller for the TV games: hockey (finger position in your half of the table),
+    // trail (four directions), race (steer by tilt or screen halves), tank (joystick + fire).
     (function () {
       'use strict';
       var q = new URLSearchParams(location.search), game = q.get('game'), room = q.get('room');
       var slot = -1, color = '#888';
+      var HINTS = {
+        hockey: 'اسحب إصبعك لتحريك المضرب',
+        trail: 'الأسهم أو السحب لتغيير الاتجاه',
+        race: 'المس يمين/يسار للتوجيه · الاثنين معاً للفرامل',
+        tank: 'حرّك بالإبهام الأيسر وأطلق بالأيمن',
+      };
       var $ = function (id) { return document.getElementById(id); };
 
       var link = GameLink.join(room, function (m) {
@@ -67,7 +94,7 @@
             $('again').style.display = 'block';
           } else {
             $('again').style.display = 'none';
-            $('msg').textContent = game === 'hockey' ? 'اسحب إصبعك لتحريك المضرب' : 'المس يمين أو يسار للانعطاف';
+            $('msg').textContent = HINTS[game] || '';
           }
         }
       }, function () { $('net').textContent = link.via() === 'p2p' ? 'اتصال مباشر' : 'اتصال عبر الإنترنت'; });
@@ -79,7 +106,7 @@
       function setup(m) {
         $('who').innerHTML = '<i style="background:' + color + ';box-shadow:0 0 10px ' + color + '"></i><span>' + m.name + '</span>';
         $('msg').textContent = m.phase === 'play' ? '' : 'بانتظار اللاعب الثاني…';
-        if (game === 'hockey') setupHockey(); else setupTrail();
+        ({ hockey: setupHockey, trail: setupTrail, race: setupRace, tank: setupTank })[game]();
       }
 
       // ---- Hockey ----
@@ -149,6 +176,85 @@
           if (Math.max(Math.abs(dx), Math.abs(dy)) < 30) return;
           turn(Math.abs(dx) > Math.abs(dy) ? (dx > 0 ? 'r' : 'l') : (dy > 0 ? 'd' : 'u'));
         });
+      }
+
+      // ---- Race ----
+      function setupRace() {
+        $('race').style.display = 'flex';
+        var held = { l: false, r: false }, tilt = null;
+        function send() {
+          var s = tilt !== null ? tilt : (held.r ? 1 : 0) - (held.l ? 1 : 0);
+          queue({ t: 'steer', s: Math.round(s * 100) / 100, b: held.l && held.r ? 1 : 0 });
+        }
+        [['rl', 'l'], ['rr', 'r']].forEach(function (p) {
+          var el = $(p[0]);
+          function down(e) { e.preventDefault(); held[p[1]] = true; el.className = 'on'; send(); }
+          function up() { held[p[1]] = false; el.className = ''; send(); }
+          el.addEventListener('touchstart', down, { passive: false }); el.addEventListener('mousedown', down);
+          el.addEventListener('touchend', up); el.addEventListener('touchcancel', up); el.addEventListener('mouseup', up);
+        });
+        // Tilt: holding the phone upright like a steering wheel, gamma is the left/right lean.
+        function onTilt(e) {
+          if (e.gamma === null) return;
+          var s = Math.max(-1, Math.min(1, e.gamma / 30));
+          tilt = Math.abs(s) < 0.08 ? 0 : s;
+          send();
+        }
+        function enableTilt() {
+          window.addEventListener('deviceorientation', onTilt);
+          $('tilt').textContent = 'التوجيه بالإمالة مفعّل ✓';
+        }
+        if (window.DeviceOrientationEvent) {
+          $('tilt').style.display = 'block';
+          $('tilt').addEventListener('click', function () {
+            // iPhone asks for permission and only after a tap.
+            if (typeof DeviceOrientationEvent.requestPermission === 'function') {
+              DeviceOrientationEvent.requestPermission().then(function (r) { if (r === 'granted') enableTilt(); }).catch(function () {});
+            } else enableTilt();
+          });
+        }
+        setInterval(send, 250); // keep the TV in sync even when nothing changes
+      }
+
+      // ---- Tank ----
+      function setupTank() {
+        $('tank').style.display = 'block';
+        var zone = $('stickZone'), base = $('stickBase'), knob = $('stickKnob'), fireBtn = $('fire');
+        fireBtn.style.background = color; fireBtn.style.boxShadow = '0 0 28px ' + color;
+        knob.style.background = color; knob.style.boxShadow = '0 0 18px ' + color;
+        var stickId = null, ox = 0, oy = 0, R = 75;
+        function place(x, y) {
+          var dx = x - ox, dy = y - oy, d = Math.sqrt(dx * dx + dy * dy), k = d > R ? R / d : 1;
+          knob.style.left = (ox + dx * k) + 'px'; knob.style.top = (oy + dy * k - 90) + 'px';
+          queue({ t: 'stick', x: Math.round(dx * k / R * 100) / 100, y: Math.round(dy * k / R * 100) / 100 });
+        }
+        zone.addEventListener('touchstart', function (e) {
+          e.preventDefault();
+          var t = e.changedTouches[0]; stickId = t.identifier; ox = t.clientX; oy = t.clientY;
+          base.style.display = knob.style.display = 'block';
+          base.style.left = ox + 'px'; base.style.top = (oy - 90) + 'px';
+          place(ox, oy);
+        }, { passive: false });
+        document.addEventListener('touchmove', function (e) {
+          for (var i = 0; i < e.changedTouches.length; i++) if (e.changedTouches[i].identifier === stickId) place(e.changedTouches[i].clientX, e.changedTouches[i].clientY);
+          e.preventDefault();
+        }, { passive: false });
+        function release(e) {
+          for (var i = 0; i < e.changedTouches.length; i++) if (e.changedTouches[i].identifier === stickId) {
+            stickId = null; base.style.display = knob.style.display = 'none'; queue({ t: 'stick', x: 0, y: 0 });
+          }
+        }
+        document.addEventListener('touchend', release); document.addEventListener('touchcancel', release);
+        // Mouse fallback for testing on a computer.
+        var mouseDown = false;
+        zone.addEventListener('mousedown', function (e) { mouseDown = true; ox = e.clientX; oy = e.clientY; base.style.display = knob.style.display = 'block';
+          base.style.left = ox + 'px'; base.style.top = (oy - 90) + 'px'; place(ox, oy); });
+        document.addEventListener('mousemove', function (e) { if (mouseDown) place(e.clientX, e.clientY); });
+        document.addEventListener('mouseup', function () { if (mouseDown) { mouseDown = false; base.style.display = knob.style.display = 'none'; queue({ t: 'stick', x: 0, y: 0 }); } });
+
+        function fire(e) { e.preventDefault(); e.stopPropagation(); fireBtn.className = 'on'; link.send({ t: 'fire' }); if (navigator.vibrate) navigator.vibrate(15); }
+        fireBtn.addEventListener('touchstart', fire, { passive: false }); fireBtn.addEventListener('mousedown', fire);
+        fireBtn.addEventListener('touchend', function () { fireBtn.className = ''; }); fireBtn.addEventListener('mouseup', function () { fireBtn.className = ''; });
       }
 
       $('again').addEventListener('click', function () { link.send({ t: 'again' }); $('again').style.display = 'none'; });

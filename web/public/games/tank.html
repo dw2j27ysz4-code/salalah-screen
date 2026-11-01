@@ -1,0 +1,273 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>معركة الدبابات</title>
+  <link rel="stylesheet" href="games.css">
+  <script src="https://cdn.jsdelivr.net/npm/peerjs@1.5.4/dist/peerjs.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/mqtt@5.10.1/dist/mqtt.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/qrcode-generator@1.4.4/qrcode.min.js"></script>
+  <script src="link.js"></script>
+  <script src="lobby.js"></script>
+</head>
+<body class="tv">
+  <div id="hud">
+    <div class="score" id="s1"><span class="dotc gold"></span><b>0</b></div>
+    <div class="hud-title">معركة الدبابات <span class="dim">· الفائز من يصيب 5 مرات</span></div>
+    <div class="score" id="s0"><b>0</b><span class="dotc cyan"></span></div>
+  </div>
+  <div id="stage"><canvas id="bg"></canvas><canvas id="fg"></canvas></div>
+  <div id="banner"></div>
+  <div id="lobby" class="lobby glass"></div>
+
+  <script>
+    // TV side of the tank battle: an arena with glass blocks. Each phone has a joystick
+    // (direction + throttle) and a fire button. Shells bounce once off walls.
+    (function () {
+      'use strict';
+      var W = 1600, H = 900, TR = 34, SPEED = 250, TURN = 4.2, SHELL_V = 720, SHELL_R = 8, WIN = 5;
+      var COOLDOWN = 380, MAX_SHELLS = 3, SHELL_LIFE = 2600, INVULN = 1200;
+      var COLORS = ['#5fd0ff', '#f6cf6a'];
+      var SPAWN = [[150, 450, 0], [1450, 450, Math.PI]];
+      // Obstacles [x, y, w, h], mirror-symmetric so neither side is favoured.
+      var BLOCKS = [[360, 160, 60, 220], [360, 520, 60, 220], [1180, 160, 60, 220], [1180, 520, 60, 220],
+        [700, 390, 200, 120], [620, 120, 120, 50], [860, 730, 120, 50], [560, 620, 50, 140], [990, 140, 50, 140]];
+
+      var tanks = null, shells = [], sparks = [], score = [0, 0], phase = 'lobby', phaseEnd = 0;
+
+      var lobby = Lobby.create({
+        game: 'tank',
+        title: 'معركة الدبابات',
+        hint: 'عصا التحريك على يسار الجوال · زر الإطلاق على اليمين',
+        slots: [{ name: 'الأزرق · يسار', color: COLORS[0] }, { name: 'الذهبي · يمين', color: COLORS[1] }],
+        onInput: function (slot, m) {
+          if (!tanks) return;
+          var t = tanks[slot];
+          if (m.t === 'stick') { t.sx = Math.max(-1, Math.min(1, +m.x || 0)); t.sy = Math.max(-1, Math.min(1, +m.y || 0)); }
+          if (m.t === 'fire') fire(slot);
+        },
+        onReady: function () { newMatch(); },
+        onAgain: function () { if (phase === 'over') newMatch(); },
+        onLeft: function () { phase = 'lobby'; },
+      });
+
+      function spawn(i) {
+        var s = SPAWN[i];
+        return { x: s[0], y: s[1], a: s[2], sx: 0, sy: 0, lastShot: 0, safeUntil: Date.now() + INVULN };
+      }
+      function newMatch() {
+        score = [0, 0]; showScore();
+        tanks = [spawn(0), spawn(1)]; shells = []; sparks = [];
+        phase = 'countdown'; phaseEnd = Date.now() + 3000;
+        lobby.broadcast({ t: 'state', phase: 'play', score: score });
+      }
+
+      function fire(i) {
+        var t = tanks[i], now = Date.now();
+        if (phase !== 'play' || now - t.lastShot < COOLDOWN) return;
+        if (shells.filter(function (s) { return s.owner === i; }).length >= MAX_SHELLS) return;
+        t.lastShot = now;
+        shells.push({ x: t.x + Math.cos(t.a) * (TR + 14), y: t.y + Math.sin(t.a) * (TR + 14),
+          vx: Math.cos(t.a) * SHELL_V, vy: Math.sin(t.a) * SHELL_V, owner: i, born: now, bounces: 0 });
+        sound(260, 0.08, 'square');
+      }
+
+      // Circle vs rectangle: push the circle out along the shortest axis.
+      function pushOut(o, r, b) {
+        var cx = Math.max(b[0], Math.min(o.x, b[0] + b[2])), cy = Math.max(b[1], Math.min(o.y, b[1] + b[3]));
+        var dx = o.x - cx, dy = o.y - cy, d = Math.sqrt(dx * dx + dy * dy);
+        if (d >= r) return null;
+        if (d === 0) { dx = 0; dy = -1; d = 1; }
+        o.x = cx + dx / d * r; o.y = cy + dy / d * r;
+        return [dx / d, dy / d];
+      }
+
+      function step(dt) {
+        tanks.forEach(function (t) {
+          var mag = Math.min(1, Math.sqrt(t.sx * t.sx + t.sy * t.sy));
+          if (mag > 0.15) {
+            // Turn toward the stick direction, then drive forward with its strength.
+            var target = Math.atan2(t.sy, t.sx), diff = Math.atan2(Math.sin(target - t.a), Math.cos(target - t.a));
+            t.a += Math.max(-TURN * dt, Math.min(TURN * dt, diff));
+            var drive = Math.abs(diff) < 1.2 ? mag : 0;
+            t.x += Math.cos(t.a) * SPEED * drive * dt; t.y += Math.sin(t.a) * SPEED * drive * dt;
+          }
+          t.x = Math.max(TR, Math.min(W - TR, t.x)); t.y = Math.max(TR, Math.min(H - TR, t.y));
+          BLOCKS.forEach(function (b) { pushOut(t, TR, b); });
+        });
+        // Tanks don't overlap each other.
+        var A = tanks[0], B = tanks[1], dx = B.x - A.x, dy = B.y - A.y, d = Math.sqrt(dx * dx + dy * dy);
+        if (d > 0 && d < TR * 2) { var p = (TR * 2 - d) / 2; A.x -= dx / d * p; A.y -= dy / d * p; B.x += dx / d * p; B.y += dy / d * p; }
+
+        var now = Date.now();
+        shells = shells.filter(function (s) {
+          s.x += s.vx * dt; s.y += s.vy * dt;
+          var bounced = false;
+          if (s.x < SHELL_R || s.x > W - SHELL_R) { s.vx = -s.vx; s.x = Math.max(SHELL_R, Math.min(W - SHELL_R, s.x)); bounced = true; }
+          if (s.y < SHELL_R || s.y > H - SHELL_R) { s.vy = -s.vy; s.y = Math.max(SHELL_R, Math.min(H - SHELL_R, s.y)); bounced = true; }
+          BLOCKS.forEach(function (b) {
+            var n = pushOut(s, SHELL_R, b);
+            if (n) { var vn = s.vx * n[0] + s.vy * n[1]; if (vn < 0) { s.vx -= 2 * vn * n[0]; s.vy -= 2 * vn * n[1]; bounced = true; } }
+          });
+          if (bounced) { s.bounces++; if (s.bounces > 1) { puff(s.x, s.y, '#ffffff', 6); return false; } sound(500, 0.03, 'triangle'); }
+          for (var i = 0; i < 2; i++) {
+            var t = tanks[i], ex = s.x - t.x, ey = s.y - t.y;
+            // A tank can be hit by its own shell only after a bounce (no instant self-hits).
+            if (ex * ex + ey * ey < (TR + SHELL_R) * (TR + SHELL_R) && (i !== s.owner || s.bounces > 0)) {
+              if (now > t.safeUntil && phase === 'play') hit(i, i === s.owner ? 1 - i : s.owner);
+              return false;
+            }
+          }
+          return now - s.born < SHELL_LIFE;
+        });
+        sparks = sparks.filter(function (p) { p.x += p.vx * dt; p.y += p.vy * dt; p.life -= dt; return p.life > 0; });
+      }
+
+      function hit(victim, scorer) {
+        puff(tanks[victim].x, tanks[victim].y, COLORS[victim], 26);
+        sound(90, 0.5, 'sawtooth');
+        score[scorer]++; showScore();
+        lobby.send(victim, { t: 'buzz', ms: 350 });
+        lobby.send(scorer, { t: 'buzz', ms: 60 });
+        if (score[scorer] >= WIN) {
+          phase = 'over';
+          banner('فاز ' + (scorer === 0 ? 'الأزرق' : 'الذهبي') + ' ' + score[scorer] + ' – ' + score[1 - scorer] +
+            '<small>اضغط «مباراة جديدة» على الجوال</small>', COLORS[scorer], 0);
+          lobby.broadcast({ t: 'state', phase: 'over', winner: scorer, score: score });
+          return;
+        }
+        banner('إصابة!', COLORS[scorer], 900);
+        tanks[victim] = spawn(victim);
+      }
+
+      function puff(x, y, color, n) {
+        for (var i = 0; i < n; i++) {
+          var a = Math.random() * Math.PI * 2, v = 80 + Math.random() * 260;
+          sparks.push({ x: x, y: y, vx: Math.cos(a) * v, vy: Math.sin(a) * v, life: 0.4 + Math.random() * 0.5, color: color });
+        }
+      }
+
+      // ---- Rendering ----
+      var bg = document.getElementById('bg'), fg = document.getElementById('fg'), ctx = fg.getContext('2d'), scale = 1, sprites = [];
+
+      function layout() {
+        var stage = document.getElementById('stage').getBoundingClientRect(), res = 0.8;
+        scale = Math.min(stage.width / W, stage.height / H) * res;
+        [bg, fg].forEach(function (c) {
+          c.width = Math.round(W * scale); c.height = Math.round(H * scale);
+          c.style.width = (c.width / res) + 'px'; c.style.height = (c.height / res) + 'px';
+        });
+        drawArena();
+        sprites = COLORS.map(tankSprite);
+      }
+
+      function roundRect(g, x, y, w, h, r) {
+        g.beginPath(); g.moveTo(x + r, y); g.arcTo(x + w, y, x + w, y + h, r); g.arcTo(x + w, y + h, x, y + h, r);
+        g.arcTo(x, y + h, x, y, r); g.arcTo(x, y, x + w, y, r); g.closePath();
+      }
+
+      function drawArena() {
+        var g = bg.getContext('2d');
+        g.setTransform(scale, 0, 0, scale, 0, 0);
+        g.clearRect(0, 0, W, H);
+        var surf = g.createLinearGradient(0, 0, 0, H);
+        surf.addColorStop(0, 'rgba(255,255,255,0.12)'); surf.addColorStop(1, 'rgba(255,255,255,0.04)');
+        roundRect(g, 0, 0, W, H, 40); g.fillStyle = surf; g.fill();
+        g.lineWidth = 3; g.strokeStyle = 'rgba(255,255,255,0.35)'; g.stroke();
+        // Glass blocks with a bright top rim.
+        BLOCKS.forEach(function (b) {
+          var gr = g.createLinearGradient(0, b[1], 0, b[1] + b[3]);
+          gr.addColorStop(0, 'rgba(255,255,255,0.32)'); gr.addColorStop(1, 'rgba(255,255,255,0.12)');
+          roundRect(g, b[0], b[1], b[2], b[3], 12); g.fillStyle = gr; g.fill();
+          g.lineWidth = 2; g.strokeStyle = 'rgba(255,255,255,0.5)'; g.stroke();
+        });
+      }
+
+      function tankSprite(color) {
+        var s = Math.ceil(TR * 3.2 * scale), c = document.createElement('canvas'); c.width = c.height = s;
+        var g = c.getContext('2d'), m = s / 2, k = scale;
+        g.translate(m, m);
+        g.shadowColor = color; g.shadowBlur = 14 * k;
+        g.fillStyle = 'rgba(30,32,40,0.9)'; roundRect(g, -TR * k, -TR * 0.95 * k, TR * 2 * k, TR * 0.45 * k, 6 * k); g.fill();  // tracks
+        roundRect(g, -TR * k, TR * 0.5 * k, TR * 2 * k, TR * 0.45 * k, 6 * k); g.fill();
+        g.fillStyle = color; roundRect(g, -TR * 0.85 * k, -TR * 0.6 * k, TR * 1.7 * k, TR * 1.2 * k, 10 * k); g.fill();         // hull
+        g.shadowBlur = 0;
+        g.fillStyle = 'rgba(255,255,255,0.85)'; g.fillRect(0, -5 * k, TR * 1.35 * k, 10 * k);                                   // barrel
+        g.fillStyle = 'rgba(20,24,40,0.55)'; g.beginPath(); g.arc(0, 0, TR * 0.42 * k, 0, Math.PI * 2); g.fill();               // turret
+        return c;
+      }
+
+      function render() {
+        ctx.setTransform(1, 0, 0, 1, 0, 0);
+        ctx.clearRect(0, 0, fg.width, fg.height);
+        if (!tanks) return;
+        var now = Date.now();
+        tanks.forEach(function (t, i) {
+          var s = sprites[i];
+          ctx.globalAlpha = now < t.safeUntil ? (Math.floor(now / 120) % 2 ? 0.35 : 0.9) : 1;
+          ctx.save(); ctx.translate(t.x * scale, t.y * scale); ctx.rotate(t.a);
+          ctx.drawImage(s, -s.width / 2, -s.height / 2); ctx.restore();
+        });
+        ctx.globalAlpha = 1;
+        shells.forEach(function (s) {
+          ctx.fillStyle = COLORS[s.owner];
+          ctx.beginPath(); ctx.arc(s.x * scale, s.y * scale, SHELL_R * scale * 1.3, 0, Math.PI * 2); ctx.fill();
+          ctx.fillStyle = '#fff';
+          ctx.beginPath(); ctx.arc(s.x * scale, s.y * scale, SHELL_R * scale * 0.6, 0, Math.PI * 2); ctx.fill();
+        });
+        sparks.forEach(function (p) {
+          ctx.globalAlpha = Math.max(0, p.life * 1.6); ctx.fillStyle = p.color;
+          ctx.fillRect(p.x * scale - 3, p.y * scale - 3, 6, 6);
+        });
+        ctx.globalAlpha = 1;
+        if (phase === 'countdown') {
+          var n = Math.max(1, Math.ceil((phaseEnd - now) / 1000));
+          ctx.fillStyle = 'rgba(255,255,255,0.9)'; ctx.font = '700 ' + (150 * scale) + 'px Tajawal, sans-serif'; ctx.textAlign = 'center';
+          ctx.fillText(String(n), fg.width / 2, fg.height * 0.3);
+        }
+      }
+
+      var last = performance.now(), acc = 0, STEP = 1 / 120;
+      function frame(now) {
+        acc += Math.min(0.1, (now - last) / 1000); last = now;
+        if (phase === 'countdown' && Date.now() >= phaseEnd) phase = 'play';
+        while (acc >= STEP) { if (tanks && phase !== 'lobby') step(STEP); acc -= STEP; }
+        render();
+        requestAnimationFrame(frame);
+      }
+
+      function showScore() {
+        document.querySelector('#s0 b').textContent = score[0];
+        document.querySelector('#s1 b').textContent = score[1];
+      }
+      var bannerTimer = null;
+      function banner(html, color, ms) {
+        var b = document.getElementById('banner');
+        b.innerHTML = html; b.style.color = color; b.className = 'show';
+        clearTimeout(bannerTimer);
+        if (ms) bannerTimer = setTimeout(function () { b.className = ''; }, ms);
+      }
+      lobby.onHide = function () { document.getElementById('banner').className = ''; };
+
+      var audio = null;
+      function sound(freq, dur, type) {
+        try {
+          audio = audio || new (window.AudioContext || window.webkitAudioContext)();
+          if (audio.state === 'suspended') audio.resume();
+          var o = audio.createOscillator(), g = audio.createGain(), t = audio.currentTime;
+          o.type = type || 'triangle'; o.frequency.setValueAtTime(freq, t); o.frequency.exponentialRampToValueAtTime(Math.max(40, freq / 3), t + dur);
+          g.gain.setValueAtTime(0.14, t); g.gain.exponentialRampToValueAtTime(0.001, t + dur);
+          o.connect(g); g.connect(audio.destination); o.start(t); o.stop(t + dur);
+        } catch (e) { /* no audio */ }
+      }
+
+      window.tankState = function () { return JSON.parse(JSON.stringify({ phase: phase, score: score, tanks: tanks, shells: shells.length })); };
+
+      layout();
+      window.addEventListener('resize', layout);
+      requestAnimationFrame(frame);
+    })();
+  </script>
+</body>
+</html>
