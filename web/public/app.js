@@ -17,21 +17,35 @@
   var MINUTE = 60 * 1000;
 
   var PRAYERS = [
-    { key: 'Fajr', name: 'الفجر', prayer: true },
-    { key: 'Sunrise', name: 'الشروق', prayer: false },
-    { key: 'Dhuhr', name: 'الظهر', prayer: true },
-    { key: 'Asr', name: 'العصر', prayer: true },
-    { key: 'Maghrib', name: 'المغرب', prayer: true },
-    { key: 'Isha', name: 'العشاء', prayer: true },
+    { key: 'Fajr', w: 'p_fajr', prayer: true },
+    { key: 'Sunrise', w: 'p_sunrise', prayer: false },
+    { key: 'Dhuhr', w: 'p_dhuhr', prayer: true },
+    { key: 'Asr', w: 'p_asr', prayer: true },
+    { key: 'Maghrib', w: 'p_maghrib', prayer: true },
+    { key: 'Isha', w: 'p_isha', prayer: true },
   ];
-  var HIJRI_MONTHS = ['محرم', 'صفر', 'ربيع الأول', 'ربيع الآخر', 'جمادى الأولى', 'جمادى الآخرة',
-    'رجب', 'شعبان', 'رمضان', 'شوال', 'ذو القعدة', 'ذو الحجة'];
-  var GREG_MONTHS = ['يناير', 'فبراير', 'مارس', 'أبريل', 'مايو', 'يونيو',
-    'يوليو', 'أغسطس', 'سبتمبر', 'أكتوبر', 'نوفمبر', 'ديسمبر'];
-  var WEEKDAYS = ['الأحد', 'الاثنين', 'الثلاثاء', 'الأربعاء', 'الخميس', 'الجمعة', 'السبت'];
 
   function $(id) { return document.getElementById(id); }
   function pad(n) { return (n < 10 ? '0' : '') + n; }
+  function setHtml(el, html) { if (el.getAttribute('data-html') !== html) { el.innerHTML = html; el.setAttribute('data-html', html); } }
+
+  // ---- Thmanyah word images (labels.js, made by tools/render-labels.mjs) ----
+  // Drawn as CSS masks filled with the text colour so they follow white/gold/ink
+  // like real text; plain <img> (white) where masks are unsupported.
+  var LABELS = window.LABELS || {};
+  var MASKS = !!(window.CSS && CSS.supports &&
+    (CSS.supports('-webkit-mask-image', 'url(a.png)') || CSS.supports('mask-image', 'url(a.png)')));
+
+  function W(key) {
+    var l = LABELS[key];
+    if (!l) return '';
+    var size = 'width:' + (l.h * l.r).toFixed(3) + 'em;height:' + l.h + 'em;vertical-align:-' + l.d + 'em;';
+    var src = 'labels/' + key + '.png';
+    if (!MASKS) return '<img class="w" alt="' + l.t + '" src="' + src + '" style="' + size + '">';
+    return '<span class="w" role="img" aria-label="' + l.t + '" style="' + size +
+      '-webkit-mask-image:url(' + src + ');mask-image:url(' + src + ')"></span>';
+  }
+  function T(key) { return LABELS[key] ? LABELS[key].t : ''; }
 
   // ---- Muscat wall-clock helpers: a "day key" is "YYYY-MM-DD" in Muscat time. ----
   function wall(ms) { return new Date(ms + OMAN_OFFSET_MS); } // read with getUTC*()
@@ -47,7 +61,7 @@
     var t = hhmm.split(':'), h = +t[0], h12 = h % 12 || 12;
     return h12 + ':' + t[1] + ' ' + (h < 12 ? 'ص' : 'م');
   }
-  function label(p, key) { return p.key === 'Dhuhr' && weekday(key) === 5 ? 'الجمعة' : p.name; }
+  function label(p, key) { return p.key === 'Dhuhr' && weekday(key) === 5 ? 'p_jumua' : p.w; }
 
   var store = {
     get: function (k) { try { var v = localStorage.getItem(k); return v ? JSON.parse(v) : null; } catch (e) { return null; } },
@@ -145,18 +159,22 @@
 
   var hijriOffset = store.get('hijriOffset') || 0;
 
-  function hijri(todayKey) {
-    var key = addDays(todayKey, hijriOffset), d, m, y;
+  function hijriParts(todayKey) {
+    var key = addDays(todayKey, hijriOffset);
     if (hijriFormat) {
       var p = parts(key), f = {};
       hijriFormat.formatToParts(new Date(Date.UTC(p[0], p[1] - 1, p[2], 12))).forEach(function (x) { f[x.type] = x.value; });
-      d = parseInt(f.day, 10); m = parseInt(f.month, 10); y = parseInt(f.year, 10);
-    } else if (days[key]) {
-      d = days[key].hijri[0]; m = days[key].hijri[1]; y = days[key].hijri[2];
-    } else {
-      return '';
+      return [parseInt(f.day, 10), parseInt(f.month, 10), parseInt(f.year, 10)];
     }
-    return d + ' ' + HIJRI_MONTHS[m - 1] + ' ' + y + ' هـ';
+    return days[key] ? days[key].hijri : null;
+  }
+  function hijriHtml(todayKey) {
+    var h = hijriParts(todayKey);
+    return h ? h[0] + ' ' + W('hm_' + h[1]) + ' ' + h[2] + ' ' + W('hijri_suffix') : '';
+  }
+  function hijriText(todayKey) {
+    var h = hijriParts(todayKey);
+    return h ? h[0] + ' ' + T('hm_' + h[1]) + ' ' + h[2] + ' هـ' : '';
   }
 
   // ---- Weather (Open-Meteo) ----
@@ -181,26 +199,27 @@
     });
   }
 
+  // WMO weather code -> [label key, icon]
   function weatherInfo(code, night) {
     switch (code) {
-      case 0: return ['صافٍ', night ? '🌙' : '☀️'];
-      case 1: return ['صافٍ غالباً', night ? '🌙' : '🌤️'];
-      case 2: return ['غائم جزئياً', '⛅'];
-      case 3: return ['غائم', '☁️'];
-      case 45: case 48: return ['ضباب', '🌫️'];
-      case 51: case 53: case 55: return ['رذاذ', '🌦️'];
-      case 56: case 57: return ['رذاذ متجمد', '🌧️'];
-      case 61: return ['مطر خفيف', '🌧️'];
-      case 63: return ['مطر متوسط', '🌧️'];
-      case 65: return ['مطر غزير', '🌧️'];
-      case 66: case 67: return ['مطر متجمد', '🌧️'];
-      case 71: case 73: case 75: case 77: return ['ثلج', '❄️'];
-      case 80: case 81: return ['زخات مطر', '🌦️'];
-      case 82: return ['زخات مطر غزيرة', '⛈️'];
-      case 85: case 86: return ['زخات ثلجية', '❄️'];
-      case 95: return ['عاصفة رعدية', '⛈️'];
-      case 96: case 99: return ['عاصفة رعدية مع برد', '⛈️'];
-      default: return ['—', '🌡️'];
+      case 0: return ['wx_clear', night ? '🌙' : '☀️'];
+      case 1: return ['wx_mostly', night ? '🌙' : '🌤️'];
+      case 2: return ['wx_partly', '⛅'];
+      case 3: return ['wx_cloudy', '☁️'];
+      case 45: case 48: return ['wx_fog', '🌫️'];
+      case 51: case 53: case 55: return ['wx_drizzle', '🌦️'];
+      case 56: case 57: return ['wx_fdrizzle', '🌧️'];
+      case 61: return ['wx_rain_l', '🌧️'];
+      case 63: return ['wx_rain_m', '🌧️'];
+      case 65: return ['wx_rain_h', '🌧️'];
+      case 66: case 67: return ['wx_frain', '🌧️'];
+      case 71: case 73: case 75: case 77: return ['wx_snow', '❄️'];
+      case 80: case 81: return ['wx_showers', '🌦️'];
+      case 82: return ['wx_showers_h', '⛈️'];
+      case 85: case 86: return ['wx_snow_sh', '❄️'];
+      case 95: return ['wx_storm', '⛈️'];
+      case 96: case 99: return ['wx_storm_h', '⛈️'];
+      default: return ['', '🌡️'];
     }
   }
 
@@ -221,33 +240,35 @@
     var html =
       '<div class="w-now">' +
         '<div class="w-icon">' + info[1] + '</div>' +
-        '<div><div class="w-temp">' + r(c.temperature_2m) + '°</div><div class="w-desc">' + info[0] + '</div></div>' +
+        '<div><div class="w-temp">' + r(c.temperature_2m) + '°</div><div class="w-desc">' + W(info[0]) + '</div></div>' +
         '<div class="w-side">' +
-          (month >= 6 && month <= 9 ? '<div class="khareef">موسم الخريف</div>' : '') +
-          '<div class="muted small">العظمى ' + r(d.temperature_2m_max[0]) + '° · الصغرى ' + r(d.temperature_2m_min[0]) + '°</div>' +
+          '<div class="w-city">' + W('city') + '</div>' +
+          (month >= 6 && month <= 9 ? '<div class="khareef">' + W('w_khareef') + '</div>' : '') +
+          '<div class="muted">' + W('w_max') + ' ' + r(d.temperature_2m_max[0]) + '° · ' +
+            W('w_min') + ' ' + r(d.temperature_2m_min[0]) + '°</div>' +
         '</div>' +
       '</div>' +
       '<div class="stats">' +
-        stat('💧 الرطوبة', c.relative_humidity_2m + '%') +
-        stat('🌧️ المطر', rain) +
-        stat('🌡️ الإحساس', r(c.apparent_temperature) + '°') +
-        stat('💨 الرياح', r(c.wind_speed_10m) + ' كم/س') +
+        stat('💧 ' + W('w_hum'), c.relative_humidity_2m + '%') +
+        stat('🌧️ ' + W('w_rain'), rain) +
+        stat('🌡️ ' + W('w_feel'), r(c.apparent_temperature) + '°') +
+        stat('💨 ' + W('w_wind'), r(c.wind_speed_10m) + ' كم/س') +
       '</div>' +
       '<div class="rule"></div>' +
-      '<div class="muted small">توقعات الأيام الثلاثة</div>' +
+      '<div class="w-fc">' + W('w_forecast') + '</div>' +
       '<div class="days">';
     for (var i = 1; i < Math.min(4, d.time.length); i++) {
       var di = weatherInfo(d.weather_code[i], false);
       html += '<div class="day">' +
-        '<div class="n">' + WEEKDAYS[weekday(d.time[i])] + '</div>' +
-        '<div class="i">' + di[1] + '</div>' +
-        '<div class="t">' + r(d.temperature_2m_max[i]) + '° / ' + r(d.temperature_2m_min[i]) + '°</div>' +
-        '<div class="s">' + di[0] + '</div>' +
-        '<div class="s">💧 ' + d.relative_humidity_2m_mean[i] + '%  🌧️ ' + d.precipitation_probability_max[i] + '%</div>' +
+        '<div class="n">' + W('wd_' + weekday(d.time[i])) + '</div>' +
+        '<div class="t"><span class="i">' + di[1] + '</span> ' +
+          r(d.temperature_2m_max[i]) + '° / ' + r(d.temperature_2m_min[i]) + '°</div>' +
+        '<div class="s">' + W(di[0]) + '</div>' +
+        '<div class="x">💧 ' + d.relative_humidity_2m_mean[i] + '%  🌧️ ' + d.precipitation_probability_max[i] + '%</div>' +
         (d.precipitation_sum[i] >= 0.1 ? '<div class="r">' + d.precipitation_sum[i].toFixed(1) + ' مم</div>' : '') +
       '</div>';
     }
-    $('weather').innerHTML = html + '</div>';
+    setHtml($('weather'), html + '</div>');
   }
 
   function stat(k, v) { return '<div class="stat"><div class="k">' + k + '</div><div class="v">' + v + '</div></div>'; }
@@ -289,15 +310,24 @@
   }
 
   // ---- Sky background by time of day, cross-faded between two layers ----
+  // [top, bottom, star opacity, glow A, glow B, glow C]. The saturated glows sit
+  // behind the glass panels so the frosted material has light to diffuse.
   var SKY = {
-    night: ['#070b1e', '#16224a', 1],
-    dawn: ['#1f2a5c', '#9a5a7e', 0.4],
-    morning: ['#2c6e9e', '#d99a6c', 0],
-    day: ['#15558c', '#3e8cc4', 0],
-    afternoon: ['#2a5b8a', '#c8873e', 0],
-    sunset: ['#4a2c63', '#d9653b', 0],
-    dusk: ['#151a3e', '#5a2d5e', 0.6],
+    night: ['#060a1c', '#141f46', 1, '#3b3fae', '#1f6f9e', '#6b2f8f'],
+    dawn: ['#1c2658', '#8e5479', 0.4, '#e0779a', '#5a6be0', '#f2a46b'],
+    morning: ['#2a6a99', '#d4966a', 0, '#ffc07a', '#4fb3e8', '#f08a7a'],
+    day: ['#13528a', '#3b88c0', 0, '#5fd0ff', '#2f6fe0', '#9be3ff'],
+    afternoon: ['#285887', '#c2823c', 0, '#ffb44d', '#3f8fe0', '#ff7f6a'],
+    sunset: ['#45295e', '#d25f37', 0, '#ff6a3d', '#b23fa0', '#ffb347'],
+    dusk: ['#131838', '#552a5a', 0.6, '#8a3fb8', '#d0507a', '#2e4fb0'],
   };
+
+  function skyBackground(s) {
+    return 'radial-gradient(38% 46% at 18% 30%, ' + s[3] + 'aa, transparent 70%),' +  // behind weather
+      'radial-gradient(42% 36% at 62% 92%, ' + s[4] + '99, transparent 70%),' +       // behind prayer bar
+      'radial-gradient(30% 34% at 88% 78%, ' + s[5] + '88, transparent 70%),' +       // behind next card
+      'linear-gradient(to bottom, ' + s[0] + ', ' + s[1] + ')';
+  }
 
   function skyPhase(now, todayKey) {
     var d = days[todayKey];
@@ -322,7 +352,7 @@
   function setSky(name) {
     if (name === currentSky) return;
     var s = SKY[name], back = skyFront === 'skyA' ? 'skyB' : 'skyA';
-    $(back).style.background = 'linear-gradient(to bottom, ' + s[0] + ', ' + s[1] + ')';
+    $(back).style.background = skyBackground(s);
     $(back).style.opacity = 1;
     $(skyFront).style.opacity = 0;
     skyFront = back;
@@ -354,9 +384,20 @@
     var html = PRAYERS.map(function (p) {
       var at = momentOf(rowKey, d.times[p.key]);
       var cls = next && next.p === p && next.key === rowKey ? 'next' : at <= now ? 'past' : !p.prayer ? 'minor' : '';
-      return '<div class="pc ' + cls + '"><div class="n">' + label(p, rowKey) + '</div><div class="t">' + time12(d.times[p.key]) + '</div></div>';
+      return '<div class="pc ' + cls + '"><div class="n">' + W(label(p, rowKey)) + '</div><div class="t">' + time12(d.times[p.key]) + '</div></div>';
     }).join('');
     if (html !== renderedRow) { $('prayers').innerHTML = html; renderedRow = html; }
+  }
+
+  // "حان وقت صلاة العصر منذ 5 دقائق", with Arabic number agreement for minutes.
+  function sinceHtml(prayerLabel, minutes) {
+    var tail;
+    if (minutes === 0) tail = W('now');
+    else if (minutes === 1) tail = W('since') + ' ' + W('min_1');
+    else if (minutes === 2) tail = W('since') + ' ' + W('min_2');
+    else if (minutes <= 10) tail = W('since') + ' ' + minutes + ' ' + W('min_few');
+    else tail = W('since') + ' ' + minutes + ' ' + W('min_1');
+    return W('now_prefix') + ' ' + W(prayerLabel) + ' ' + tail;
   }
 
   function tick() {
@@ -366,25 +407,25 @@
     var h = w.getUTCHours();
     $('hm').textContent = (h % 12 || 12) + ':' + pad(w.getUTCMinutes());
     $('sec').textContent = pad(w.getUTCSeconds());
-    $('ampm').textContent = h < 12 ? 'صباحاً' : 'مساءً';
+    setHtml($('ampm'), W(h < 12 ? 'am' : 'pm'));
+    setHtml($('greeting'), W(h < 12 ? 'g_morning' : 'g_evening'));
 
     if (renderedDay !== todayKey) {
       var p = parts(todayKey);
-      $('greg').textContent = WEEKDAYS[weekday(todayKey)] + '  ' + p[2] + ' ' + GREG_MONTHS[p[1] - 1] + ' ' + p[0] + 'م';
+      setHtml($('greg'), W('wd_' + weekday(todayKey)) + ' ' + p[2] + ' ' + W('gm_' + p[1]) + ' ' + p[0]);
       renderedDay = todayKey;
     }
-    var hijriText = hijri(todayKey);
-    if ($('hijri').textContent !== hijriText) $('hijri').textContent = hijriText;
+    setHtml($('hijri'), hijriHtml(todayKey));
 
     var next = nextPrayer(now, todayKey);
     if (next) {
       var left = Math.max(0, Math.floor((next.at - now) / 1000));
-      $('nextName').textContent = label(next.p, next.key) + '  ' + time12(days[next.key].times[next.p.key]);
+      setHtml($('nextName'), W(label(next.p, next.key)) + ' ' + time12(days[next.key].times[next.p.key]));
       $('countdown').textContent = pad(Math.floor(left / 3600)) + ':' + pad(Math.floor(left % 3600 / 60)) + ':' + pad(left % 60);
     }
     var cur = currentPrayer(now, todayKey);
     var since = cur ? Math.floor((now - cur.at) / MINUTE) : -1;
-    $('nowBanner').textContent = cur && since < 20 ? 'حان وقت صلاة ' + label(cur.p, cur.key) + ' منذ ' + since + ' دقيقة' : '';
+    setHtml($('nowBanner'), cur && since < 20 ? sinceHtml(label(cur.p, cur.key), since) : '');
 
     // After Isha the row switches to tomorrow's times, with Fajr highlighted.
     renderPrayerRow(now, next && next.key !== todayKey ? next.key : todayKey, next);
@@ -416,7 +457,7 @@
       var o = b.getAttribute('data-offset');
       if (o !== null) b.textContent = (+o === hijriOffset ? '✓ ' : '') + b.textContent.replace(/^✓ /, '');
     });
-    $('hijriPreview').textContent = 'التاريخ الهجري: ' + hijri(keyOf(wall(Date.now())));
+    $('hijriPreview').textContent = 'التاريخ الهجري: ' + hijriText(keyOf(wall(Date.now())));
   }
 
   document.addEventListener('keydown', function (e) {
@@ -455,6 +496,9 @@
 
   // ---- Start ----
   var startedAt = Date.now();
+  Array.prototype.forEach.call(document.querySelectorAll('[data-w]'), function (el) {
+    el.innerHTML = W(el.getAttribute('data-w'));
+  });
   makeStars();
   renderWeather();
   tick();

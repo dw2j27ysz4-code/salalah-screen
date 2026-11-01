@@ -11,12 +11,11 @@
   <div id="skyA" class="sky"></div>
   <div id="skyB" class="sky"></div>
   <div id="stars"></div>
-  <div id="dim"></div>
 
   <main>
     <section class="top">
       <div class="clock-col">
-        <div class="city">صلالة · سلطنة عُمان</div>
+        <div class="greeting-wrap"><div id="greeting" class="greeting"></div></div>
         <div class="clock">
           <span id="hm">--:--</span>
           <span class="clock-side"><span id="sec">00</span><span id="ampm"></span></span>
@@ -24,39 +23,39 @@
         <div id="greg" class="date"></div>
         <div id="hijri" class="date gold"></div>
         <div class="spacer"></div>
-        <div class="next-card">
+        <div class="next-card glass">
           <div id="nowBanner" class="now-banner"></div>
           <div class="next-row">
             <div>
-              <div class="lbl">الصلاة القادمة</div>
+              <div class="lbl" data-w="next_label"></div>
               <div id="nextName" class="next-name">جارٍ تحميل أوقات الصلاة…</div>
             </div>
             <div>
-              <div class="lbl">متبقٍ</div>
+              <div class="lbl" data-w="left_label"></div>
               <div id="countdown" class="countdown">--:--:--</div>
             </div>
           </div>
         </div>
       </div>
 
-      <div id="weather" class="weather panel">
+      <div id="weather" class="weather glass">
         <div class="muted">جارٍ تحميل الطقس…</div>
       </div>
     </section>
 
-    <section id="prayers" class="prayers">
+    <section id="prayers" class="prayers glass">
       <div class="muted loading">جارٍ تحميل أوقات الصلاة…</div>
     </section>
   </main>
 
   <div id="hint" class="hint">اضغط OK في الريموت لفتح الإعدادات</div>
-  <footer class="news">
-    <div class="news-label">أخبار</div>
+  <footer class="news glass">
+    <div class="news-label" data-w="news"></div>
     <div id="ticker" class="ticker"><span id="tickerText">جارٍ تحميل الأخبار…</span></div>
   </footer>
 
   <div id="settings" class="settings hidden">
-    <div class="settings-card">
+    <div class="settings-card glass">
       <div class="settings-title">الإعدادات</div>
       <div class="muted">تعديل التاريخ الهجري حسب إعلان رؤية الهلال في سلطنة عُمان</div>
       <div class="btn-row">
@@ -74,6 +73,7 @@
     </div>
   </div>
 
+  <script src="labels.js"></script>
   <script src="app.js"></script>
 </body>
 </html>

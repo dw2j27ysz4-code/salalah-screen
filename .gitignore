@@ -3,3 +3,8 @@ build/
 app/build/
 local.properties
 web/public/news.json
+
+# Thmanyah license forbids hosting the font files: render labels locally only.
+*.woff2
+*.otf
+**/thmanyah*/

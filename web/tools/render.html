@@ -1,0 +1,95 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="utf-8">
+  <title>Label renderer</title>
+  <style>
+    body { background: #1b2140; color: #fff; font-family: sans-serif; margin: 24px; }
+    .row { display: flex; align-items: center; gap: 24px; margin: 10px 0; }
+    .tag { font: 14px monospace; color: #9ab; width: 220px; direction: ltr; }
+    #log { font: 14px monospace; direction: ltr; white-space: pre; }
+  </style>
+  <script src="label-catalog.js"></script>
+</head>
+<body>
+  <div id="out"></div>
+  <div id="log"></div>
+  <script>
+    // ?sample=1 compares styles; otherwise renders the catalog with ?family=&hero=&name=&label= weights.
+    var q = new URLSearchParams(location.search);
+    var FAMILIES = {
+      sans: 'thmanyahsans/woff2/thmanyahsans-',
+      serifdisplay: 'thmanyahserifdisplay/woff2/thmanyahserifdisplay-',
+      seriftext: 'thmanyahseriftext/woff2/thmanyahseriftext-',
+    };
+    var WEIGHTS = { Light: 300, Regular: 400, Medium: 500, Bold: 700, Black: 900 };
+    var SIZE = 128; // render size in px; the screen shows them at most ~70px
+
+    function loadFont(family, weight) {
+      var name = family + '-' + weight;
+      var face = new FontFace(name, 'url(font/' + FAMILIES[family] + weight + '.woff2)');
+      document.fonts.add(face);
+      return face.load().then(function () { return name; });
+    }
+
+    function draw(text, fontName, size) {
+      var c = document.createElement('canvas'), ctx = c.getContext('2d');
+      var font = size + 'px "' + fontName + '"';
+      ctx.font = font; ctx.direction = 'rtl'; ctx.textAlign = 'center';
+      var m = ctx.measureText(text);
+      // Use the font's own ascent/descent so every image shares one baseline.
+      var asc = Math.ceil(m.fontBoundingBoxAscent), desc = Math.ceil(m.fontBoundingBoxDescent);
+      var pad = Math.ceil(size * 0.04);
+      var w = Math.ceil(m.actualBoundingBoxLeft + m.actualBoundingBoxRight) + 2 * pad;
+      c.width = w; c.height = asc + desc;
+      ctx.font = font; ctx.direction = 'rtl'; ctx.textAlign = 'center'; ctx.textBaseline = 'alphabetic';
+      ctx.fillStyle = '#fff';
+      ctx.fillText(text, pad + m.actualBoundingBoxLeft, asc);
+      return { canvas: c, meta: { h: +(c.height / size).toFixed(4), d: +(desc / size).toFixed(4), r: +(w / c.height).toFixed(4) } };
+    }
+
+    function post(path, body) {
+      return fetch(path, { method: 'POST', body: JSON.stringify(body || {}) }).then(function (r) { return r.json(); });
+    }
+
+    if (q.get('sample')) {
+      var phrases = ['صبـــاح الخيـــر، حســن', 'الفجـــر  العصـــر  المغـــرب', 'جمـادى الأولى · نوفمبـــر', 'الصـلاة القـــادمة'];
+      var jobs = [];
+      Object.keys(FAMILIES).forEach(function (f) {
+        ['Medium', 'Bold'].forEach(function (w) { jobs.push(loadFont(f, w).then(function (n) { return [f + ' ' + w, n]; })); });
+      });
+      Promise.all(jobs).then(function (fonts) {
+        fonts.forEach(function (pair) {
+          var row = document.createElement('div'); row.className = 'row';
+          row.innerHTML = '<div class="tag">' + pair[0] + '</div>';
+          phrases.forEach(function (p) {
+            var img = draw(p, pair[1], 44).canvas; row.appendChild(img);
+          });
+          document.getElementById('out').appendChild(row);
+        });
+      });
+    } else {
+      var family = q.get('family') || 'serifdisplay';
+      var styles = { hero: q.get('hero') || 'Bold', name: q.get('name') || 'Bold', label: q.get('label') || 'Medium' };
+      var names = {};
+      var uniq = Object.keys(styles).map(function (k) { return styles[k]; }).filter(function (v, i, a) { return a.indexOf(v) === i; });
+      Promise.all(uniq.map(function (w) { return loadFont(family, w).then(function (n) { names[w] = n; }); }))
+        .then(function () { return post('/start'); })
+        .then(function () {
+          var keys = Object.keys(LABEL_CATALOG), chain = Promise.resolve();
+          keys.forEach(function (key) {
+            chain = chain.then(function () {
+              var entry = LABEL_CATALOG[key];
+              var out = draw(entry[0], names[styles[entry[1]]], SIZE);
+              out.meta.t = entry[0].replace(/ـ/g, '');
+              return post('/save', { key: key, png: out.canvas.toDataURL('image/png'), meta: out.meta });
+            });
+          });
+          return chain.then(function () { return post('/done'); });
+        })
+        .then(function (r) { document.getElementById('log').textContent = 'done: ' + JSON.stringify(r); })
+        .catch(function (e) { document.getElementById('log').textContent = 'error: ' + e; });
+    }
+  </script>
+</body>
+</html>

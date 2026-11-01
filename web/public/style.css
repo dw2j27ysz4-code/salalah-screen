@@ -1,5 +1,15 @@
 /* All sizes are in --u, 1/540 of the screen height, so the layout matches the
-   Android TV version (designed in 960x540 dp) at any TV browser resolution. */
+   Android TV version (designed in 960x540 dp) at any TV browser resolution.
+
+   Material: Liquid Glass-style layering (after Armitanemati/liquid-glass-claude-skill).
+   - The sky is content; four floating surfaces are glass: next-prayer card, weather
+     panel, prayer bar, news bar (+ the settings sheet). Nothing inside them is
+     blurred again (no glass on glass): inner items use plain fills.
+   - The sky carries saturated radial glows so the frost has something to work on;
+     blur over a flat gradient is invisible.
+   - Fill leans to the legible side (white text on a dark tint). No refraction:
+     SVG lensing inside backdrop-filter is Chromium-only and the TV engine is unknown.
+   - Tint only marks the primary item: the next prayer. */
 @font-face { font-family: Tajawal; font-weight: 400; src: url(fonts/tajawal_regular.ttf) format('truetype'); }
 @font-face { font-family: Tajawal; font-weight: 700; src: url(fonts/tajawal_bold.ttf) format('truetype'); }
 @font-face { font-family: Tajawal; font-weight: 800; src: url(fonts/tajawal_extrabold.ttf) format('truetype'); }
@@ -7,9 +17,22 @@
 :root {
   --u: calc(100vh / 540);
   --u: min(calc(100vh / 540), calc(100vw / 960));
-  --gold: #f4c95d;
-  --dim: rgba(255, 255, 255, 0.72);
-  --panel: rgba(0, 0, 0, 0.28);
+  --gold: #f6cf6a;
+  --ink: #1a1330;
+  --dim: rgba(255, 255, 255, 0.74);
+
+  /* Glass tokens: one knob per property. */
+  --glass-fill: rgba(18, 22, 44, 0.34);        /* regular tier over the dark-to-mid sky */
+  --glass-fill-solid: rgba(18, 22, 44, 0.66);  /* fallback when backdrop-filter is missing */
+  --glass-blur: calc(26 * var(--u));
+  --glass-saturate: 150%;
+  --glass-edge: rgba(255, 255, 255, 0.20);     /* hairline */
+  --glass-rim: rgba(255, 255, 255, 0.38);      /* top inner highlight */
+  --glass-shadow: 0 calc(18 * var(--u)) calc(48 * var(--u)) rgba(6, 8, 28, 0.34);
+  --inner-fill: rgba(255, 255, 255, 0.07);     /* sub-areas inside a glass surface */
+
+  --r-panel: calc(28 * var(--u));
+  --r-inner: calc(16 * var(--u));              /* concentric: panel radius minus padding */
 }
 
 * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -17,22 +40,50 @@ html, body {
   width: 100%; height: 100%; overflow: hidden;
   background: #0b1026; color: #fff;
   font-family: Tajawal, 'Noto Sans Arabic', sans-serif;
-  text-shadow: 0 calc(2 * var(--u)) calc(6 * var(--u)) rgba(0, 0, 0, 0.45);
 }
 
-.sky { position: fixed; inset: 0; top: 0; left: 0; right: 0; bottom: 0; transition: opacity 8s linear; }
+.sky { position: fixed; top: 0; left: 0; right: 0; bottom: 0; transition: opacity 8s linear; }
 #stars { position: fixed; top: 0; left: 0; right: 0; bottom: 0; transition: opacity 8s linear; }
 #stars i { position: absolute; border-radius: 50%; background: #fff; }
-#dim { position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0, 0, 0, 0.18); }
+
+/* ---- Glass material ---- */
+.glass {
+  position: relative;
+  background: var(--glass-fill);
+  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
+  backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
+  border: 1px solid var(--glass-edge);
+  border-radius: var(--r-panel);
+  box-shadow: var(--glass-shadow), inset 0 1px 0 var(--glass-rim), inset 0 -1px 0 rgba(255, 255, 255, 0.06);
+}
+/* Specular sheen: light from the upper right (RTL reading start). */
+.glass::before {
+  content: ''; position: absolute; top: 0; left: 0; right: 0; bottom: 0;
+  border-radius: inherit; pointer-events: none;
+  background: linear-gradient(215deg, rgba(255, 255, 255, 0.16) 0%, rgba(255, 255, 255, 0.03) 32%, rgba(255, 255, 255, 0) 55%);
+}
+.glass > * { position: relative; }
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  .glass { background: var(--glass-fill-solid); }
+}
+
+/* Thmanyah word images: masks painted with the text colour, sized in em. */
+.w {
+  display: inline-block;
+  background-color: currentColor;
+  -webkit-mask-size: 100% 100%; mask-size: 100% 100%;
+  -webkit-mask-repeat: no-repeat; mask-repeat: no-repeat;
+}
+img.w { background: none; }
 
 main {
-  position: fixed; top: 0; left: 0; right: 0; bottom: calc(46 * var(--u));
+  position: fixed; top: 0; left: 0; right: 0; bottom: calc(62 * var(--u));
   display: flex; flex-direction: column;
-  padding: calc(22 * var(--u)) calc(32 * var(--u)) calc(14 * var(--u));
+  padding: calc(20 * var(--u)) calc(30 * var(--u)) calc(12 * var(--u));
 }
 .top { flex: 1; display: flex; min-height: 0; }
 .clock-col { flex: 1.15; display: flex; flex-direction: column; margin-left: calc(24 * var(--u)); }
-.weather { flex: 1; margin-bottom: calc(14 * var(--u)); }
+.weather { flex: 1; margin-bottom: calc(14 * var(--u)); padding: calc(14 * var(--u)) calc(20 * var(--u)); display: flex; flex-direction: column; }
 
 .muted { color: var(--dim); font-size: calc(18 * var(--u)); }
 .small { font-size: calc(16 * var(--u)); }
@@ -40,103 +91,115 @@ main {
 .gold { color: var(--gold); }
 .spacer { flex: 1; }
 
-.city { font-size: calc(20 * var(--u)); color: var(--dim); }
-.clock { display: flex; align-items: flex-end; line-height: 1; }
-#hm { font-size: calc(118 * var(--u)); font-weight: 800; }
-.clock-side { display: flex; flex-direction: column; margin-right: calc(10 * var(--u)); padding-bottom: calc(18 * var(--u)); }
-#sec { font-size: calc(34 * var(--u)); font-weight: 700; color: var(--dim); }
+/* ---- Clock column (on the sky, not glass) ---- */
+.greeting-wrap { filter: drop-shadow(0 calc(2 * var(--u)) calc(6 * var(--u)) rgba(0, 0, 0, 0.35)); }
+.greeting { font-size: calc(40 * var(--u)); line-height: 1.2; }
+.clock { display: flex; align-items: flex-end; line-height: 1; text-shadow: 0 calc(2 * var(--u)) calc(10 * var(--u)) rgba(0, 0, 0, 0.3); }
+#hm { font-size: calc(124 * var(--u)); font-weight: 400; letter-spacing: calc(-2 * var(--u)); }
+.clock-side { display: flex; flex-direction: column; align-items: center; margin-right: calc(12 * var(--u)); padding-bottom: calc(20 * var(--u)); }
+#sec { font-size: calc(32 * var(--u)); font-weight: 700; color: var(--dim); }
 #ampm { font-size: calc(22 * var(--u)); color: var(--dim); }
-.date { font-size: calc(26 * var(--u)); font-weight: 700; margin-top: calc(4 * var(--u)); }
+.date { font-size: calc(27 * var(--u)); font-weight: 700; line-height: 1.35; filter: drop-shadow(0 calc(1 * var(--u)) calc(4 * var(--u)) rgba(0, 0, 0, 0.3)); }
 
 .next-card {
   align-self: flex-start;
   margin-bottom: calc(14 * var(--u));
   padding: calc(12 * var(--u)) calc(22 * var(--u));
-  background: var(--panel);
-  border: calc(2 * var(--u)) solid rgba(244, 201, 93, 0.7);
-  border-radius: calc(18 * var(--u));
+  background: linear-gradient(rgba(246, 207, 106, 0.14), rgba(246, 207, 106, 0.06)), var(--glass-fill);
+  border-color: rgba(246, 207, 106, 0.42);
 }
-.now-banner { font-size: calc(20 * var(--u)); color: var(--gold); font-weight: 700; }
+.now-banner { font-size: calc(21 * var(--u)); color: var(--gold); font-weight: 700; }
 .now-banner:empty { display: none; }
 .next-row { display: flex; align-items: center; }
-.next-row > div + div { margin-right: calc(28 * var(--u)); }
-.lbl { font-size: calc(18 * var(--u)); color: var(--dim); }
-.next-name { font-size: calc(30 * var(--u)); font-weight: 700; }
-.countdown { font-size: calc(40 * var(--u)); font-weight: 800; color: var(--gold); direction: ltr; text-align: right; }
+.next-row > div + div { margin-right: calc(30 * var(--u)); }
+.lbl { font-size: calc(19 * var(--u)); color: var(--dim); }
+.next-name { font-size: calc(32 * var(--u)); font-weight: 700; }
+.countdown { font-size: calc(42 * var(--u)); font-weight: 800; color: var(--gold); direction: ltr; text-align: right; }
 
-.panel {
-  background: var(--panel);
-  border-radius: calc(22 * var(--u));
-  padding: calc(14 * var(--u)) calc(20 * var(--u));
-  display: flex; flex-direction: column;
-}
+/* ---- Weather panel ---- */
+.w-city { font-size: calc(17 * var(--u)); color: var(--dim); }
 .w-now { display: flex; align-items: center; }
-.w-icon { font-size: calc(50 * var(--u)); margin-left: calc(12 * var(--u)); }
-.w-temp { font-size: calc(54 * var(--u)); font-weight: 800; line-height: 1.05; }
-.w-desc { font-size: calc(20 * var(--u)); }
-.w-side { margin-right: auto; text-align: left; display: flex; flex-direction: column; align-items: flex-end; }
+.w-icon { font-size: calc(44 * var(--u)); margin-left: calc(12 * var(--u)); }
+.w-temp { font-size: calc(52 * var(--u)); font-weight: 400; line-height: 1.05; }
+.w-desc { font-size: calc(21 * var(--u)); }
+.w-side { margin-right: auto; display: flex; flex-direction: column; align-items: flex-end; }
+.w-side .muted { font-size: calc(17 * var(--u)); }
 .khareef {
-  font-size: calc(15 * var(--u)); font-weight: 700; color: #0b1026; text-shadow: none;
-  background: #9be3b0; border-radius: calc(8 * var(--u)); padding: calc(2 * var(--u)) calc(8 * var(--u));
+  font-size: calc(16 * var(--u)); color: #0b2a1a;
+  background: rgba(155, 227, 176, 0.9); border-radius: 999px; padding: calc(2 * var(--u)) calc(10 * var(--u));
 }
 .stats { display: flex; justify-content: space-between; margin-top: calc(8 * var(--u)); }
 .stat { text-align: center; }
-.stat .k { font-size: calc(14 * var(--u)); color: var(--dim); }
+.stat .k { font-size: calc(16 * var(--u)); color: var(--dim); }
 .stat .v { font-size: calc(22 * var(--u)); font-weight: 700; }
-.rule { height: 1px; background: rgba(255, 255, 255, 0.2); margin: calc(10 * var(--u)) 0 calc(8 * var(--u)); }
-.days { flex: 1; display: flex; min-height: 0; margin-top: calc(4 * var(--u)); }
+.rule { height: 1px; background: rgba(255, 255, 255, 0.16); margin: calc(10 * var(--u)) 0 calc(6 * var(--u)); }
+.w-fc { font-size: calc(17 * var(--u)); color: var(--dim); }
+.days { flex: 1; display: flex; min-height: 0; margin-top: calc(6 * var(--u)); }
 .day {
   flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: space-evenly;
-  background: rgba(255, 255, 255, 0.08); border-radius: calc(14 * var(--u)); padding: calc(6 * var(--u));
+  background: var(--inner-fill); border-radius: var(--r-inner); padding: calc(6 * var(--u));
 }
 .day + .day { margin-right: calc(10 * var(--u)); }
-.day .n { font-size: calc(17 * var(--u)); font-weight: 700; }
-.day .i { font-size: calc(26 * var(--u)); }
-.day .t { font-size: calc(18 * var(--u)); font-weight: 700; }
-.day .s { font-size: calc(13 * var(--u)); color: var(--dim); white-space: nowrap; }
+.day .n { font-size: calc(19 * var(--u)); }
+.day .i { font-size: calc(20 * var(--u)); }
+.day .t { font-size: calc(18 * var(--u)); font-weight: 700; white-space: nowrap; }
+.day .s { font-size: calc(15 * var(--u)); color: var(--dim); white-space: nowrap; }
+.day .x { font-size: calc(13 * var(--u)); color: var(--dim); white-space: nowrap; }
 .day .r { font-size: calc(13 * var(--u)); color: #9fd3ff; }
 
-.prayers { display: flex; height: calc(104 * var(--u)); }
-.prayers .loading { align-self: center; font-size: calc(24 * var(--u)); }
+/* ---- Prayer bar: one glass surface, plain fills inside ---- */
+.prayers { display: flex; height: calc(110 * var(--u)); padding: calc(8 * var(--u)); }
+.prayers .loading { align-self: center; font-size: calc(24 * var(--u)); margin: 0 calc(16 * var(--u)); }
 .pc {
   flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center;
-  background: var(--panel); border: 1px solid rgba(255, 255, 255, 0.15); border-radius: calc(18 * var(--u));
+  border-radius: calc(20 * var(--u));
 }
-.pc + .pc { margin-right: calc(12 * var(--u)); }
-.pc .n { font-size: calc(24 * var(--u)); font-weight: 700; }
-.pc .t { font-size: calc(28 * var(--u)); font-weight: 800; }
+.pc + .pc { margin-right: calc(6 * var(--u)); }
+.pc .n { font-size: calc(26 * var(--u)); line-height: 1.25; }
+.pc .t { font-size: calc(27 * var(--u)); font-weight: 700; }
 .pc.past, .pc.minor { color: var(--dim); }
-.pc.next { flex: 1.25; background: rgba(244, 201, 93, 0.92); border-color: transparent; color: #1a1330; text-shadow: none; }
-.pc.next .n { font-size: calc(28 * var(--u)); }
-.pc.next .t { font-size: calc(34 * var(--u)); }
+.pc.past { opacity: 0.7; }
+.pc.next {
+  flex: 1.3; color: var(--ink);
+  background: linear-gradient(180deg, rgba(250, 220, 140, 0.96), rgba(242, 196, 82, 0.92));
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.7), 0 calc(6 * var(--u)) calc(18 * var(--u)) rgba(242, 196, 82, 0.35);
+}
+.pc.next .n { font-size: calc(30 * var(--u)); }
+.pc.next .t { font-size: calc(34 * var(--u)); font-weight: 800; }
 
 .hint {
-  position: fixed; bottom: calc(50 * var(--u)); right: calc(32 * var(--u));
-  font-size: calc(16 * var(--u)); color: var(--dim); transition: opacity 1s;
+  position: fixed; top: calc(4 * var(--u)); left: 50%; transform: translateX(-50%);
+  font-size: calc(14 * var(--u)); color: var(--dim); transition: opacity 1s; white-space: nowrap;
 }
+
+/* ---- News bar: floating glass pill ---- */
 .news {
-  position: fixed; left: 0; right: 0; bottom: 0; height: calc(46 * var(--u));
-  display: flex; align-items: stretch; background: rgba(0, 0, 0, 0.55);
+  position: fixed; left: calc(30 * var(--u)); right: calc(30 * var(--u)); bottom: calc(12 * var(--u));
+  height: calc(46 * var(--u)); display: flex; align-items: stretch;
+  border-radius: 999px; overflow: hidden;
 }
 .news-label {
-  display: flex; align-items: center; padding: 0 calc(18 * var(--u));
-  background: #b3261e; font-size: calc(22 * var(--u)); font-weight: 800;
+  display: flex; align-items: center; padding: 0 calc(22 * var(--u));
+  font-size: calc(24 * var(--u)); color: #fff;
+  background: linear-gradient(180deg, rgba(214, 64, 52, 0.92), rgba(179, 38, 30, 0.9));
+  border-radius: 999px; margin: calc(4 * var(--u));
 }
-.ticker { flex: 1; position: relative; overflow: hidden; margin: 0 calc(12 * var(--u)); }
+.ticker { flex: 1; position: relative; overflow: hidden; margin: 0 calc(10 * var(--u)); }
 #tickerText {
   position: absolute; left: 0; top: 0; bottom: 0;
   line-height: calc(46 * var(--u)); white-space: nowrap;
   font-size: calc(22 * var(--u)); font-weight: 700; will-change: transform;
 }
 
+/* ---- Settings sheet: thick glass over a scrim ---- */
 .settings {
   position: fixed; top: 0; left: 0; right: 0; bottom: 0;
-  display: flex; align-items: center; justify-content: center; background: rgba(0, 0, 0, 0.7);
+  display: flex; align-items: center; justify-content: center; background: rgba(4, 6, 20, 0.45);
 }
 .hidden { display: none; }
 .settings-card {
   width: calc(620 * var(--u)); padding: calc(28 * var(--u));
-  background: #1b2140; border-radius: calc(24 * var(--u));
+  --glass-fill: rgba(22, 26, 52, 0.78);
 }
 .settings-card > * + * { margin-top: calc(14 * var(--u)); }
 .settings-title { font-size: calc(30 * var(--u)); font-weight: 800; }
@@ -144,9 +207,9 @@ main {
 .btn-row { display: flex; }
 .btn {
   font-family: inherit; font-size: calc(18 * var(--u)); font-weight: 700;
-  color: #fff; background: rgba(255, 255, 255, 0.12);
-  border: calc(2 * var(--u)) solid transparent; border-radius: calc(12 * var(--u));
-  padding: calc(10 * var(--u)) calc(18 * var(--u)); outline: none;
+  color: #fff; background: rgba(255, 255, 255, 0.10);
+  border: 1px solid rgba(255, 255, 255, 0.16); border-radius: 999px;
+  padding: calc(10 * var(--u)) calc(20 * var(--u)); outline: none;
 }
 .btn + .btn { margin-right: calc(12 * var(--u)); }
-.btn:focus { background: #fff; color: #1b2140; text-shadow: none; border-color: var(--gold); }
+.btn:focus { background: #fff; color: #1b2140; border-color: var(--gold); box-shadow: 0 0 0 calc(3 * var(--u)) rgba(246, 207, 106, 0.6); }
