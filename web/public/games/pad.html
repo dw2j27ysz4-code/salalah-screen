@@ -1,0 +1,158 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+  <meta name="theme-color" content="#1c1c1e">
+  <title>يد التحكم</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
+    html, body { height: 100%; overflow: hidden; background: linear-gradient(#3a3b40, #161618); color: #fff;
+      font-family: -apple-system, 'SF Arabic', 'Segoe UI', Tahoma, sans-serif; touch-action: none; user-select: none; -webkit-user-select: none; }
+    #top { position: fixed; top: 0; left: 0; right: 0; padding: max(14px, env(safe-area-inset-top)) 18px 10px;
+      display: flex; align-items: center; justify-content: space-between; font-size: 17px; }
+    #who { font-weight: 700; display: flex; align-items: center; gap: 8px; }
+    #who i { width: 16px; height: 16px; border-radius: 50%; background: #888; display: inline-block; }
+    #net { font-size: 12px; color: rgba(255,255,255,.55); }
+    #msg { position: fixed; left: 0; right: 0; top: 54px; text-align: center; color: rgba(255,255,255,.75); font-size: 15px; padding: 0 16px; }
+    /* Hockey: a touch area shaped like your half of the table, goal on the outer edge. */
+    #area { position: fixed; border-radius: 28px; display: none;
+      background: linear-gradient(180deg, rgba(255,255,255,.16), rgba(255,255,255,.05)); border: 1px solid rgba(255,255,255,.28); }
+    #area .goal { position: absolute; top: 33%; height: 34%; width: 8px; border-radius: 4px; }
+    #area .mid { position: absolute; top: 4%; bottom: 4%; width: 3px; background: rgba(246,207,106,.5); }
+    #knob { position: absolute; width: 64px; height: 64px; margin: -32px 0 0 -32px; border-radius: 50%; display: none; }
+    /* Trail duel: a big four-way pad (directions match the TV), swiping works anywhere too. */
+    #turns { position: fixed; display: none; direction: ltr;
+      grid-template-columns: 1fr 1fr 1fr; grid-template-rows: 1fr 1fr 1fr; gap: 10px; }
+    #turns button { border: 1px solid rgba(255,255,255,.25); border-radius: 26px; color: #fff; font-size: 40px; font-family: inherit;
+      background: linear-gradient(180deg, rgba(255,255,255,.18), rgba(255,255,255,.05)); }
+    #turns button.on { background: rgba(255,255,255,.45); }
+    #turns .u { grid-column: 2; grid-row: 1; } #turns .l { grid-column: 1; grid-row: 2; }
+    #turns .r { grid-column: 3; grid-row: 2; } #turns .d { grid-column: 2; grid-row: 3; }
+    #again { position: fixed; left: 50%; bottom: max(24px, env(safe-area-inset-bottom)); transform: translateX(-50%); display: none;
+      font-weight: 700; font-size: 20px; font-family: inherit; color: #1a1330; background: #f6cf6a; border: 0; border-radius: 999px; padding: 14px 34px; }
+  </style>
+  <script src="https://cdn.jsdelivr.net/npm/peerjs@1.5.4/dist/peerjs.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/mqtt@5.10.1/dist/mqtt.min.js"></script>
+  <script src="link.js"></script>
+</head>
+<body>
+  <div id="top"><div id="who"><i></i><span>جارٍ الاتصال…</span></div><div id="net"></div></div>
+  <div id="msg">انتظر قليلاً…</div>
+  <div id="area"><div class="mid"></div><div class="goal"></div><div id="knob"></div></div>
+  <div id="turns">
+    <button class="u" data-d="u">▲</button><button class="l" data-d="l">◀</button>
+    <button class="r" data-d="r">▶</button><button class="d" data-d="d">▼</button>
+  </div>
+  <button id="again">مباراة جديدة</button>
+  <script>
+    // Phone controller for the TV games. ?game=hockey streams the finger position inside a
+    // picture of your half of the table; ?game=trail sends left/right turns.
+    (function () {
+      'use strict';
+      var q = new URLSearchParams(location.search), game = q.get('game'), room = q.get('room');
+      var slot = -1, color = '#888';
+      var $ = function (id) { return document.getElementById(id); };
+
+      var link = GameLink.join(room, function (m) {
+        if (m.t === 'slot') {
+          if (slot !== m.slot) { slot = m.slot; color = m.color; setup(m); }
+        } else if (m.t === 'full') {
+          $('msg').textContent = 'اللعبة ممتلئة: يوجد لاعبان بالفعل';
+        } else if (m.t === 'buzz') {
+          if (navigator.vibrate) navigator.vibrate(m.ms || 20);
+        } else if (m.t === 'state') {
+          if (m.phase === 'over') {
+            $('msg').textContent = m.winner === slot ? 'فزت! 🎉' : 'خسرت هذه المرة';
+            $('again').style.display = 'block';
+          } else {
+            $('again').style.display = 'none';
+            $('msg').textContent = game === 'hockey' ? 'اسحب إصبعك لتحريك المضرب' : 'المس يمين أو يسار للانعطاف';
+          }
+        }
+      }, function () { $('net').textContent = link.via() === 'p2p' ? 'اتصال مباشر' : 'اتصال عبر الإنترنت'; });
+
+      // Ask for a seat until we get one, then keep a heartbeat so the TV knows we're here.
+      setInterval(function () { link.send({ t: 'hello' }); }, 1000);
+      link.send({ t: 'hello' });
+
+      function setup(m) {
+        $('who').innerHTML = '<i style="background:' + color + ';box-shadow:0 0 10px ' + color + '"></i><span>' + m.name + '</span>';
+        $('msg').textContent = m.phase === 'play' ? '' : 'بانتظار اللاعب الثاني…';
+        if (game === 'hockey') setupHockey(); else setupTrail();
+      }
+
+      // ---- Hockey ----
+      var pending = null;
+      function setupHockey() {
+        var area = $('area'), top = 90, pad = 16;
+        var aw = innerWidth - pad * 2, ah = innerHeight - top - pad - 70;
+        var ratio = 8 / 9; // half of a 16:9 table
+        var w = Math.min(aw, ah * ratio), h = w / ratio;
+        area.style.cssText = 'display:block;width:' + w + 'px;height:' + h + 'px;left:' + ((innerWidth - w) / 2) + 'px;top:' + (top + (ah - h) / 2) + 'px';
+        var goal = area.querySelector('.goal'), mid = area.querySelector('.mid');
+        goal.style.background = color; goal.style.boxShadow = '0 0 14px ' + color;
+        // Same orientation as the TV: left player's goal on the left, right player's on the right.
+        if (slot === 0) { goal.style.left = '-4px'; mid.style.right = '0'; } else { goal.style.right = '-4px'; mid.style.left = '0'; }
+        var knob = $('knob');
+        knob.style.background = color; knob.style.boxShadow = '0 0 20px ' + color;
+
+        function onTouch(e) {
+          var t = e.touches ? e.touches[0] : e, r = area.getBoundingClientRect();
+          if (!t) return;
+          var x = Math.max(0, Math.min(1, (t.clientX - r.left) / r.width));
+          var y = Math.max(0, Math.min(1, (t.clientY - r.top) / r.height));
+          knob.style.display = 'block'; knob.style.left = (x * 100) + '%'; knob.style.top = (y * 100) + '%';
+          queue({ t: 'move', x: x, y: y });
+          e.preventDefault();
+        }
+        document.addEventListener('touchstart', onTouch, { passive: false });
+        document.addEventListener('touchmove', onTouch, { passive: false });
+        document.addEventListener('mousemove', function (e) { if (e.buttons) onTouch(e); });
+        document.addEventListener('mousedown', onTouch);
+      }
+
+      // Send each position straight away (lowest latency), at most every 12 ms;
+      // a position that arrives sooner is sent when the 12 ms are up.
+      var lastSent = 0, flushTimer = null;
+      function queue(msg) {
+        pending = msg;
+        var wait = 12 - (Date.now() - lastSent);
+        if (wait <= 0) flush();
+        else if (!flushTimer) flushTimer = setTimeout(flush, wait);
+      }
+      function flush() {
+        flushTimer = null;
+        if (!pending) return;
+        link.send(pending); pending = null; lastSent = Date.now();
+      }
+
+      // ---- Trail duel ----
+      function setupTrail() {
+        var pad = $('turns'), size = Math.min(innerWidth - 32, innerHeight - 170);
+        pad.style.cssText = 'display:grid;width:' + size + 'px;height:' + size + 'px;left:' + ((innerWidth - size) / 2) +
+          'px;top:' + (100 + (innerHeight - 170 - size) / 2) + 'px';
+        function turn(d) { link.send({ t: 'turn', d: d }); if (navigator.vibrate) navigator.vibrate(10); }
+        Array.prototype.forEach.call(pad.querySelectorAll('button'), function (el) {
+          function press(e) { e.preventDefault(); e.stopPropagation(); el.classList.add('on'); turn(el.getAttribute('data-d')); }
+          function release() { el.classList.remove('on'); }
+          el.addEventListener('touchstart', press, { passive: false });
+          el.addEventListener('mousedown', press);
+          el.addEventListener('touchend', release); el.addEventListener('mouseup', release);
+        });
+        // Swipe anywhere outside the buttons: the dominant axis picks the direction.
+        var sx = 0, sy = 0;
+        document.addEventListener('touchstart', function (e) { sx = e.touches[0].clientX; sy = e.touches[0].clientY; }, { passive: true });
+        document.addEventListener('touchend', function (e) {
+          if (e.target.closest && e.target.closest('#turns button')) return; // a button press, not a swipe
+          var t = e.changedTouches[0], dx = t.clientX - sx, dy = t.clientY - sy;
+          if (Math.max(Math.abs(dx), Math.abs(dy)) < 30) return;
+          turn(Math.abs(dx) > Math.abs(dy) ? (dx > 0 ? 'r' : 'l') : (dy > 0 ? 'd' : 'u'));
+        });
+      }
+
+      $('again').addEventListener('click', function () { link.send({ t: 'again' }); $('again').style.display = 'none'; });
+    })();
+  </script>
+</body>
+</html>

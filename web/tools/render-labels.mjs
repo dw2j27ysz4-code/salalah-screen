@@ -41,8 +41,9 @@ createServer(async (req, res) => {
       return send(res, 200, 'text/html; charset=utf-8', await readFile(join(TOOLS, 'icon.html')));
     }
     if (req.method === 'POST' && path === '/save-icon') {
-      const { png } = await readBody(req);
-      await writeFile(join(PUBLIC, 'tile-icon.png'), Buffer.from(png.split(',')[1], 'base64'));
+      const { png, name } = await readBody(req);
+      const file = name === 'games-icon' ? 'games-icon.png' : 'tile-icon.png';
+      await writeFile(join(PUBLIC, file), Buffer.from(png.split(',')[1], 'base64'));
       return send(res, 200, 'application/json', '{"ok":true}');
     }
     if (req.method === 'GET' && path === '/label-catalog.js') {

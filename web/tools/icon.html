@@ -31,6 +31,20 @@
       ctx.restore();
     }
 
+    // ?kind=games draws the games tile instead of the Salalah screen tile.
+    var KIND = new URLSearchParams(location.search).get('kind') || 'screen';
+
+    function glowDot(ctx, x, y, r, color) {
+      ctx.save();
+      ctx.shadowColor = color; ctx.shadowBlur = r * 0.9; ctx.fillStyle = color;
+      ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.fill();
+      ctx.shadowBlur = 0;
+      var hl = ctx.createRadialGradient(x - r * 0.35, y - r * 0.35, r * 0.1, x, y, r);
+      hl.addColorStop(0, 'rgba(255,255,255,0.7)'); hl.addColorStop(0.6, 'rgba(255,255,255,0.05)'); hl.addColorStop(1, 'rgba(0,0,0,0.2)');
+      ctx.fillStyle = hl; ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.fill();
+      ctx.restore();
+    }
+
     function star(ctx, cx, cy, r) {
       ctx.save();
       ctx.fillStyle = GOLD_HI; ctx.shadowColor = 'rgba(246, 207, 106, 0.6)'; ctx.shadowBlur = 14;
@@ -57,14 +71,25 @@
       glow.addColorStop(0, 'rgba(246, 207, 106, 0.22)'); glow.addColorStop(1, 'rgba(246, 207, 106, 0)');
       ctx.fillStyle = glow; ctx.fillRect(0, 0, S, S);
 
-      crescent(ctx, 262, 190, 104);
-      star(ctx, 196, 168, 26);
+      var games = KIND === 'games';
+      if (games) {
+        // Two glowing paddles and a puck across a gold centre line, as in the hockey game.
+        ctx.strokeStyle = 'rgba(246,207,106,0.6)'; ctx.lineWidth = 6;
+        ctx.beginPath(); ctx.moveTo(256, 70); ctx.lineTo(256, 300); ctx.stroke();
+        ctx.beginPath(); ctx.arc(256, 185, 62, 0, Math.PI * 2); ctx.stroke();
+        glowDot(ctx, 132, 185, 48, '#5fd0ff');
+        glowDot(ctx, 386, 160, 48, '#f6cf6a');
+        glowDot(ctx, 300, 214, 22, '#ffffff');
+      } else {
+        crescent(ctx, 262, 190, 104);
+        star(ctx, 196, 168, 26);
+      }
 
-      // صلالة with kashida, white, Thmanyah Serif Display Bold.
+      // Title with kashida, white, Thmanyah Serif Display Bold.
       ctx.save();
       ctx.font = '128px ThmanyahDisplay'; ctx.direction = 'rtl'; ctx.textAlign = 'center';
       ctx.fillStyle = '#ffffff'; ctx.shadowColor = 'rgba(0,0,0,0.35)'; ctx.shadowBlur = 12; ctx.shadowOffsetY = 4;
-      ctx.fillText('صلالـــة', S / 2, 430);
+      ctx.fillText(games ? 'ألعـــاب' : 'صلالـــة', S / 2, 430);
       ctx.restore();
 
       // Hairline top highlight, as on the glass panels.
@@ -76,7 +101,8 @@
       draw(big);
       document.getElementById('small').getContext('2d').drawImage(document.getElementById('c'), 0, 0);
       if (new URLSearchParams(location.search).get('save')) {
-        return fetch('/save-icon', { method: 'POST', body: JSON.stringify({ png: document.getElementById('c').toDataURL('image/png') }) })
+        return fetch('/save-icon', { method: 'POST', body: JSON.stringify({
+          png: document.getElementById('c').toDataURL('image/png'), name: KIND === 'games' ? 'games-icon' : 'tile-icon' }) })
           .then(function (r) { return r.json(); })
           .then(function (j) { document.getElementById('log').textContent = 'saved ' + JSON.stringify(j); });
       }

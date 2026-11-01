@@ -32,16 +32,20 @@
 
   // TV side. onMessage(msg, via); onState(transport, state).
   function host(room, onMessage, onState) {
-    var conns = {};
+    var conns = {};    // PeerJS peer id -> connection
+    var byPlayer = {}; // player id (msg.from) -> connection, learned from their messages
     var api = {
       room: room,
       // Send to one player ({to: id}) or everyone, over the given transport or the best one.
       send: function (msg, via) {
         var useP2p = via !== 'mqtt';
         var sentP2p = false;
-        Object.keys(conns).forEach(function (id) {
-          if (useP2p && (!msg.to || msg.to === id) && conns[id].open) { conns[id].send(msg); sentP2p = true; }
-        });
+        if (useP2p && msg.to) {
+          var c = byPlayer[msg.to];
+          if (c && c.open) { c.send(msg); sentP2p = true; }
+        } else if (useP2p) {
+          Object.keys(conns).forEach(function (id) { if (conns[id].open) { conns[id].send(msg); sentP2p = true; } });
+        }
         if ((via === 'mqtt' || (!via && !sentP2p)) && mqttClient && mqttClient.connected) {
           mqttClient.publish(topic(room, 'down'), JSON.stringify(msg));
         }
@@ -57,8 +61,11 @@
       peer.on('error', function (e) { onState('p2p', 'error:' + (e && e.type)); });
       peer.on('connection', function (conn) {
         conn.on('open', function () { conns[conn.peer] = conn; onState('p2p', 'open'); });
-        conn.on('data', function (d) { onMessage(d, 'p2p'); });
-        conn.on('close', function () { delete conns[conn.peer]; });
+        conn.on('data', function (d) { if (d && d.from) byPlayer[d.from] = conn; onMessage(d, 'p2p'); });
+        conn.on('close', function () {
+          delete conns[conn.peer];
+          Object.keys(byPlayer).forEach(function (id) { if (byPlayer[id] === conn) delete byPlayer[id]; });
+        });
       });
     } else {
       onState('p2p', 'unsupported');

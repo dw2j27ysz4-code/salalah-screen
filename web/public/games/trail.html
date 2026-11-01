@@ -1,0 +1,218 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>مبارزة الأثر</title>
+  <link rel="stylesheet" href="games.css">
+  <script src="https://cdn.jsdelivr.net/npm/peerjs@1.5.4/dist/peerjs.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/mqtt@5.10.1/dist/mqtt.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/qrcode-generator@1.4.4/qrcode.min.js"></script>
+  <script src="link.js"></script>
+  <script src="lobby.js"></script>
+</head>
+<body class="tv">
+  <div id="hud">
+    <div class="score" id="s1"><span class="dotc gold"></span><b>0</b></div>
+    <div class="hud-title">مبارزة الأثر <span class="dim">· الفائز من يكسب 5 جولات</span></div>
+    <div class="score" id="s0"><b>0</b><span class="dotc cyan"></span></div>
+  </div>
+  <div id="stage"><canvas id="bg"></canvas><canvas id="trails"></canvas><canvas id="fg"></canvas></div>
+  <div id="banner"></div>
+  <div id="lobby" class="lobby glass"></div>
+
+  <script>
+    // TV side of the light-trail duel: two riders on a grid leave a wall of light behind
+    // them; touching any wall or trail loses the round. Phones send absolute directions.
+    (function () {
+      'use strict';
+      var COLS = 96, ROWS = 54, WIN = 5;
+      var COLORS = ['#5fd0ff', '#f6cf6a'];
+      var DIRS = { u: [0, -1], d: [0, 1], l: [-1, 0], r: [1, 0] };
+      var START_TICK = 75, MIN_TICK = 45; // ms per cell; speeds up during a round
+
+      var grid, riders, score = [0, 0], phase = 'lobby', phaseEnd = 0, tickMs = START_TICK, lastTick = 0;
+
+      var lobby = Lobby.create({
+        game: 'trail',
+        title: 'مبارزة الأثر',
+        hint: 'وجّه خطّك بالأسهم أو بالسحب، وحاصر خصمك',
+        slots: [{ name: 'الأزرق · يسار', color: COLORS[0] }, { name: 'الذهبي · يمين', color: COLORS[1] }],
+        onTurn: function (slot, m) {
+          var r = riders && riders[slot];
+          if (!r || !DIRS[m.d]) return;
+          // Queue up to two turns so a quick double turn between ticks isn't lost.
+          if (r.queue.length < 2) r.queue.push(m.d);
+        },
+        onReady: function () { score = [0, 0]; showScore(); newRound(); },
+        onAgain: function () { if (phase === 'over') { score = [0, 0]; showScore(); newRound(); } },
+        onLeft: function () { phase = 'lobby'; },
+      });
+
+      function newRound() {
+        grid = new Uint8Array(COLS * ROWS);
+        riders = [
+          { x: 12, y: ROWS >> 1, dir: 'r', queue: [], alive: true },
+          { x: COLS - 13, y: ROWS >> 1, dir: 'l', queue: [], alive: true },
+        ];
+        riders.forEach(function (r, i) { grid[r.y * COLS + r.x] = i + 1; });
+        clearTrails();
+        riders.forEach(function (r, i) { paintCell(r.x, r.y, i); });
+        tickMs = START_TICK;
+        phase = 'countdown'; phaseEnd = Date.now() + 3000;
+        lobby.broadcast({ t: 'state', phase: 'play', score: score });
+      }
+
+      function opposite(a, b) { return DIRS[a][0] === -DIRS[b][0] && DIRS[a][1] === -DIRS[b][1]; }
+
+      function tick() {
+        riders.forEach(function (r) {
+          while (r.queue.length) {
+            var d = r.queue.shift();
+            if (d !== r.dir && !opposite(d, r.dir)) { r.dir = d; break; }
+          }
+          r.nx = r.x + DIRS[r.dir][0]; r.ny = r.y + DIRS[r.dir][1];
+        });
+        var headOn = riders[0].nx === riders[1].nx && riders[0].ny === riders[1].ny;
+        riders.forEach(function (r) {
+          var out = r.nx < 0 || r.ny < 0 || r.nx >= COLS || r.ny >= ROWS;
+          if (out || headOn || grid[r.ny * COLS + r.nx]) r.alive = false;
+        });
+        riders.forEach(function (r, i) {
+          if (!r.alive) return;
+          r.x = r.nx; r.y = r.ny;
+          grid[r.y * COLS + r.x] = i + 1;
+          paintCell(r.x, r.y, i);
+        });
+        if (!riders[0].alive || !riders[1].alive) endRound();
+        tickMs = Math.max(MIN_TICK, tickMs - 0.15);
+      }
+
+      function endRound() {
+        var a = riders[0].alive, b = riders[1].alive;
+        sound(140, 0.5);
+        if (a === b) {
+          banner('تعادل', '#ffffff', 1500);
+          riders.forEach(function (_, i) { lobby.send(i, { t: 'buzz', ms: 300 }); });
+        } else {
+          var w = a ? 0 : 1;
+          score[w]++; showScore();
+          lobby.send(w, { t: 'buzz', ms: 80 });
+          lobby.send(1 - w, { t: 'buzz', ms: 400 });
+          if (score[w] >= WIN) {
+            phase = 'over';
+            banner('فاز ' + (w === 0 ? 'الأزرق' : 'الذهبي') + ' ' + score[w] + ' – ' + score[1 - w] +
+              '<small>اضغط «مباراة جديدة» على الجوال</small>', COLORS[w], 0);
+            lobby.broadcast({ t: 'state', phase: 'over', winner: w, score: score });
+            return;
+          }
+          banner('جولة ' + (w === 0 ? 'للأزرق' : 'للذهبي'), COLORS[w], 1500);
+        }
+        phase = 'between'; phaseEnd = Date.now() + 1800;
+      }
+
+      // ---- Rendering: trails are painted once per new cell onto their own canvas ----
+      var bg = document.getElementById('bg'), tr = document.getElementById('trails'), fg = document.getElementById('fg');
+      var cell = 10, heads = [];
+
+      function layout() {
+        var stage = document.getElementById('stage').getBoundingClientRect();
+        cell = Math.floor(Math.min(stage.width / COLS, stage.height / ROWS));
+        [bg, tr, fg].forEach(function (c) { c.width = COLS * cell; c.height = ROWS * cell; });
+        drawBoard();
+        heads = COLORS.map(function (c) { return glow(c); });
+        if (grid) { clearTrails(); for (var i = 0; i < grid.length; i++) if (grid[i]) paintCell(i % COLS, (i / COLS) | 0, grid[i] - 1); }
+      }
+
+      function drawBoard() {
+        var g = bg.getContext('2d'), w = bg.width, h = bg.height;
+        g.clearRect(0, 0, w, h);
+        var surf = g.createLinearGradient(0, 0, 0, h);
+        surf.addColorStop(0, 'rgba(255,255,255,0.12)'); surf.addColorStop(1, 'rgba(255,255,255,0.04)');
+        g.fillStyle = surf; g.fillRect(0, 0, w, h);
+        g.strokeStyle = 'rgba(255,255,255,0.05)'; g.lineWidth = 1;
+        for (var x = 6; x < COLS; x += 6) { g.beginPath(); g.moveTo(x * cell + 0.5, 0); g.lineTo(x * cell + 0.5, h); g.stroke(); }
+        for (var y = 6; y < ROWS; y += 6) { g.beginPath(); g.moveTo(0, y * cell + 0.5); g.lineTo(w, y * cell + 0.5); g.stroke(); }
+        g.strokeStyle = 'rgba(255,255,255,0.4)'; g.lineWidth = 3; g.strokeRect(1.5, 1.5, w - 3, h - 3);
+      }
+
+      function clearTrails() { tr.getContext('2d').clearRect(0, 0, tr.width, tr.height); }
+      function paintCell(x, y, i) {
+        var g = tr.getContext('2d');
+        g.fillStyle = COLORS[i]; g.globalAlpha = 0.85;
+        g.fillRect(x * cell + 1, y * cell + 1, cell - 2, cell - 2);
+        g.globalAlpha = 1;
+      }
+      function glow(color) {
+        var s = cell * 5, c = document.createElement('canvas'); c.width = c.height = s;
+        var g = c.getContext('2d'), grad = g.createRadialGradient(s / 2, s / 2, 0, s / 2, s / 2, s / 2);
+        grad.addColorStop(0, '#ffffff'); grad.addColorStop(0.15, color); grad.addColorStop(1, 'rgba(0,0,0,0)');
+        g.fillStyle = grad; g.fillRect(0, 0, s, s);
+        return c;
+      }
+
+      function render() {
+        var g = fg.getContext('2d');
+        g.clearRect(0, 0, fg.width, fg.height);
+        if (!riders) return;
+        riders.forEach(function (r, i) {
+          var img = heads[i];
+          g.globalAlpha = r.alive ? 1 : 0.35;
+          g.drawImage(img, (r.x + 0.5) * cell - img.width / 2, (r.y + 0.5) * cell - img.height / 2);
+        });
+        g.globalAlpha = 1;
+        if (phase === 'countdown') {
+          var n = Math.max(1, Math.ceil((phaseEnd - Date.now()) / 1000));
+          g.fillStyle = 'rgba(255,255,255,0.85)'; g.font = '700 ' + (cell * 12) + 'px Tajawal, sans-serif'; g.textAlign = 'center';
+          g.fillText(String(n), fg.width / 2, fg.height * 0.42);
+        }
+      }
+
+      function frame() {
+        var now = Date.now();
+        if (phase === 'countdown' && now >= phaseEnd) { phase = 'play'; lastTick = now; }
+        if (phase === 'between' && now >= phaseEnd) newRound();
+        if (phase === 'play') {
+          var guard = 0;
+          while (now - lastTick >= tickMs && phase === 'play' && guard++ < 4) { lastTick += tickMs; tick(); }
+        }
+        render();
+        requestAnimationFrame(frame);
+      }
+
+      function showScore() {
+        document.querySelector('#s0 b').textContent = score[0];
+        document.querySelector('#s1 b').textContent = score[1];
+      }
+      var bannerTimer = null;
+      function banner(html, color, ms) {
+        var b = document.getElementById('banner');
+        b.innerHTML = html; b.style.color = color; b.className = 'show';
+        clearTimeout(bannerTimer);
+        if (ms) bannerTimer = setTimeout(function () { b.className = ''; }, ms);
+      }
+      lobby.onHide = function () { document.getElementById('banner').className = ''; };
+
+      var audio = null;
+      function sound(freq, dur) {
+        try {
+          audio = audio || new (window.AudioContext || window.webkitAudioContext)();
+          if (audio.state === 'suspended') audio.resume();
+          var o = audio.createOscillator(), g = audio.createGain(), t = audio.currentTime;
+          o.type = 'sawtooth'; o.frequency.setValueAtTime(freq * 2, t); o.frequency.exponentialRampToValueAtTime(freq / 2, t + dur);
+          g.gain.setValueAtTime(0.12, t); g.gain.exponentialRampToValueAtTime(0.001, t + dur);
+          o.connect(g); g.connect(audio.destination); o.start(t); o.stop(t + dur);
+        } catch (e) { /* no audio */ }
+      }
+
+      window.trailState = function () {
+        return JSON.parse(JSON.stringify({ phase: phase, score: score, riders: riders, tickMs: tickMs }));
+      };
+
+      layout();
+      window.addEventListener('resize', layout);
+      requestAnimationFrame(frame);
+    })();
+  </script>
+</body>
+</html>
