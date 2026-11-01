@@ -1,0 +1,86 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>اختبار الاتصال</title>
+  <style>
+    html, body { margin: 0; height: 100%; overflow: hidden; background: #1c1c1e; color: #fff; font-family: Tajawal, sans-serif; }
+    @font-face { font-family: Tajawal; font-weight: 700; src: url(../fonts/tajawal_bold.ttf); }
+    .side { position: fixed; top: 4vh; right: 4vw; width: 34vw; font-size: 2.6vh; line-height: 1.6; }
+    .side h1 { font-size: 4vh; margin: 0 0 1vh; }
+    #qr { background: #fff; padding: 1.5vh; border-radius: 2vh; display: inline-block; }
+    #qr img { width: 26vh; height: 26vh; display: block; image-rendering: pixelated; }
+    .ok { color: #7ee2a8; } .bad { color: #ff8a80; } .dim { color: rgba(255,255,255,.6); }
+    #field { position: fixed; top: 4vh; left: 4vw; width: 52vw; height: 92vh; border-radius: 3vh;
+      background: rgba(255,255,255,.08); border: 1px solid rgba(255,255,255,.2); }
+    #dot { position: absolute; width: 5vh; height: 5vh; margin: -2.5vh 0 0 -2.5vh; border-radius: 50%;
+      background: #f6cf6a; box-shadow: 0 0 3vh #f6cf6a; left: 50%; top: 50%; }
+  </style>
+  <script src="https://cdn.jsdelivr.net/npm/peerjs@1.5.4/dist/peerjs.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/mqtt@5.10.1/dist/mqtt.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/qrcode-generator@1.4.4/qrcode.min.js"></script>
+  <script src="link.js"></script>
+</head>
+<body>
+  <div id="field"><div id="dot"></div></div>
+  <div class="side">
+    <h1>اختبار الاتصال</h1>
+    <div id="qr"></div>
+    <div class="dim">امسح الرمز بالجوال وحرّك إصبعك</div>
+    <div id="caps"></div>
+    <div id="p2p"></div>
+    <div id="mqtt"></div>
+    <div id="moves" class="dim"></div>
+  </div>
+  <script>
+    // TV half of the link test: shows a QR for the phone, measures round-trip time over each
+    // transport and reports the results to the broker (topic salalahtv/<room>/report).
+    (function () {
+      var room = new URLSearchParams(location.search).get('room') || GameLink.randomId(6);
+      var padUrl = location.href.replace(/link-test\.html.*$/, 'link-pad.html?room=' + room);
+      var qr = qrcode(0, 'M'); qr.addData(padUrl); qr.make();
+      document.getElementById('qr').innerHTML = qr.createImgTag(6, 0);
+
+      var caps = {
+        websocket: 'WebSocket' in window,
+        webrtc: 'RTCPeerConnection' in window,
+        datachannel: !!(window.RTCPeerConnection && RTCPeerConnection.prototype.createDataChannel),
+      };
+      document.getElementById('caps').textContent = 'WebSocket: ' + (caps.websocket ? 'نعم' : 'لا') + ' · WebRTC: ' + (caps.webrtc ? 'نعم' : 'لا');
+
+      var state = { p2p: 'starting', mqtt: 'starting' }, rtt = { p2p: [], mqtt: [] }, moves = 0;
+      function median(a) { if (!a.length) return null; var s = a.slice().sort(function (x, y) { return x - y; }); return Math.round(s[s.length >> 1]); }
+      function show() {
+        ['p2p', 'mqtt'].forEach(function (k) {
+          var m = median(rtt[k]), el = document.getElementById(k);
+          el.className = m !== null ? 'ok' : (/error|unsupported/.test(state[k]) ? 'bad' : '');
+          el.textContent = (k === 'p2p' ? 'مباشر (WebRTC): ' : 'وسيط (MQTT): ') + state[k] + (m !== null ? ' · ' + m + ' ms' : '');
+        });
+        document.getElementById('moves').textContent = 'حركات مستلمة: ' + moves;
+      }
+
+      var link = GameLink.host(room, function (msg, via) {
+        if (msg.t === 'pong') { rtt[via].push(Date.now() - msg.ts); if (rtt[via].length > 30) rtt[via].shift(); }
+        if (msg.t === 'move') {
+          moves++;
+          var dot = document.getElementById('dot');
+          dot.style.left = (msg.x * 100) + '%'; dot.style.top = (msg.y * 100) + '%';
+        }
+        show();
+      }, function (transport, s) { state[transport] = s; show(); });
+
+      setInterval(function () {
+        link.send({ t: 'ping', ts: Date.now() }, 'p2p');
+        link.send({ t: 'ping', ts: Date.now() }, 'mqtt');
+      }, 500);
+      setInterval(function () {
+        link.publish('report', { caps: caps, state: state, p2p: median(rtt.p2p), mqtt: median(rtt.mqtt),
+          samples: { p2p: rtt.p2p.length, mqtt: rtt.mqtt.length }, moves: moves, ua: navigator.userAgent,
+          screen: innerWidth + 'x' + innerHeight });
+      }, 3000);
+      show();
+    })();
+  </script>
+</body>
+</html>

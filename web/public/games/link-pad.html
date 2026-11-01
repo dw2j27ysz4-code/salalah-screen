@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+  <title>يد التحكم</title>
+  <style>
+    html, body { margin: 0; height: 100%; overflow: hidden; background: #1c1c1e; color: #fff;
+      font-family: -apple-system, 'SF Arabic', Tahoma, sans-serif; touch-action: none; user-select: none; }
+    #pad { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center; flex-direction: column; }
+    #status { font-size: 16px; color: rgba(255,255,255,.7); text-align: center; line-height: 1.7; }
+    h1 { font-size: 22px; margin: 0 0 8px; }
+  </style>
+  <script src="https://cdn.jsdelivr.net/npm/peerjs@1.5.4/dist/peerjs.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/mqtt@5.10.1/dist/mqtt.min.js"></script>
+  <script src="link.js"></script>
+</head>
+<body>
+  <div id="pad"><h1>حرّك إصبعك هنا</h1><div id="status">جارٍ الاتصال بالتلفزيون…</div></div>
+  <script>
+    // Phone half of the link test: echoes the TV's pings over the same transport and
+    // streams finger position (0..1) over the best available one.
+    (function () {
+      var room = new URLSearchParams(location.search).get('room');
+      var state = { p2p: '…', mqtt: '…' };
+      function show() {
+        document.getElementById('status').innerHTML = 'مباشر: ' + state.p2p + '<br>وسيط: ' + state.mqtt + '<br>يرسل عبر: ' + link.via();
+      }
+      var link = GameLink.join(room, function (msg, via) {
+        if (msg.t === 'ping') link.send({ t: 'pong', ts: msg.ts }, via);
+      }, function (transport, s) { state[transport] = s; show(); });
+
+      var pending = null;
+      function onTouch(e) {
+        var t = e.touches ? e.touches[0] : e;
+        if (!t) return;
+        pending = { t: 'move', x: t.clientX / innerWidth, y: t.clientY / innerHeight };
+        e.preventDefault();
+      }
+      document.addEventListener('touchstart', onTouch, { passive: false });
+      document.addEventListener('touchmove', onTouch, { passive: false });
+      document.addEventListener('mousemove', function (e) { if (e.buttons) onTouch(e); });
+      (function loop() { if (pending) { link.send(pending); pending = null; } requestAnimationFrame(loop); })();
+      show();
+    })();
+  </script>
+</body>
+</html>
