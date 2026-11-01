@@ -8,8 +8,10 @@
   <script src="https://cdn.jsdelivr.net/npm/peerjs@1.5.4/dist/peerjs.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/mqtt@5.10.1/dist/mqtt.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/qrcode-generator@1.4.4/qrcode.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/pixi.js@7.4.2/dist/pixi.min.js"></script>
   <script src="link.js"></script>
   <script src="lobby.js"></script>
+  <script src="fx.js"></script>
 </head>
 <body class="tv">
   <div id="hud">
@@ -17,20 +19,21 @@
     <div class="hud-title">هوكي الطاولة <span class="dim">· الفائز من يسجّل 7</span></div>
     <div class="score" id="s0"><b>0</b><span class="dotc cyan"></span></div>
   </div>
-  <div id="stage"><canvas id="bg"></canvas><canvas id="fg"></canvas></div>
+  <div id="stage"></div>
   <div id="banner"></div>
   <div id="lobby" class="lobby glass"></div>
 
   <script>
     // TV side of air hockey: owns the physics; each phone streams its finger position as a
     // target for its paddle. Table units: 1600 x 900, goals in the left and right walls.
+    // Rendering is PixiJS via fx.js (sparks, shockwaves, puck streak, goal bursts).
     (function () {
       'use strict';
       var W = 1600, H = 900, GOAL = 300, PR = 50, KR = 30, WIN = 7;
       var MAX_PADDLE = 3000, MAX_PUCK = 3400, FRICTION = 0.22, BOUNCE = 0.9;
       var COLORS = ['#5fd0ff', '#f6cf6a']; // slot 0 = left (cyan), slot 1 = right (gold)
 
-      var paddles, puck, score = [0, 0], phase = 'lobby', phaseEnd = 0, trail = [];
+      var paddles, puck, score = [0, 0], phase = 'lobby', phaseEnd = 0, hitStop = 0;
 
       var lobby = Lobby.create({
         game: 'hockey',
@@ -55,8 +58,8 @@
       }
       function serve(towardSlot) {
         puck = { x: W / 2 + (towardSlot === 0 ? -160 : 160), y: H / 2, vx: 0, vy: 0 };
-        trail = [];
         phase = 'countdown'; phaseEnd = Date.now() + 2000;
+        fx.ring(puck.x, puck.y, 0xffffff, 140, 0.5);
       }
       function newMatch() {
         score = [0, 0]; showScore(); resetPaddles();
@@ -83,20 +86,31 @@
         if (vn < 0) {
           puck.vx -= (1 + BOUNCE) * vn * nx; puck.vy -= (1 + BOUNCE) * vn * ny;
           var sp = Math.sqrt(puck.vx * puck.vx + puck.vy * puck.vy);
-          if (sp > MAX_PUCK) { puck.vx *= MAX_PUCK / sp; puck.vy *= MAX_PUCK / sp; }
+          if (sp > MAX_PUCK) { puck.vx *= MAX_PUCK / sp; puck.vy *= MAX_PUCK / sp; sp = MAX_PUCK; }
           sound(320 + Math.min(sp, 3000) / 10, 0.05);
           lobby.send(slot, { t: 'buzz', ms: 18 });
+          // Impact: sparks thrown along the new direction, a ring, and a beat of hit-stop on hard shots.
+          var hx = p.x + nx * PR, hy = p.y + ny * PR, power = Math.min(1, sp / MAX_PUCK);
+          fx.emit({ x: hx, y: hy, count: 8 + Math.round(power * 16), color: [COLORS[slot], 0xffffff], tex: 'spark',
+            speed: [300, 900 + power * 900], life: [0.18, 0.45], size: 34, angle: Math.atan2(puck.vy, puck.vx), spread: 1.6, drag: 4 });
+          fx.ring(hx, hy, COLORS[slot], 120 + power * 160, 0.35);
+          if (power > 0.55) { fx.shake(6 + power * 8, 160); hitStop = 0.045; }
         }
+      }
+
+      function wallSpark(x, y, ang) {
+        sound(220, 0.03);
+        fx.emit({ x: x, y: y, count: 6, color: 0xffffff, tex: 'spark', speed: [200, 600], life: [0.15, 0.3], size: 22, angle: ang, spread: 1.8, drag: 5 });
       }
 
       function stepPuck(dt) {
         puck.x += puck.vx * dt; puck.y += puck.vy * dt;
         var f = Math.max(0, 1 - FRICTION * dt); puck.vx *= f; puck.vy *= f;
-        if (puck.y < KR) { puck.y = KR; puck.vy = Math.abs(puck.vy) * BOUNCE; sound(220, 0.03); }
-        if (puck.y > H - KR) { puck.y = H - KR; puck.vy = -Math.abs(puck.vy) * BOUNCE; sound(220, 0.03); }
+        if (puck.y < KR) { puck.y = KR; puck.vy = Math.abs(puck.vy) * BOUNCE; if (Math.abs(puck.vy) > 250) wallSpark(puck.x, 0, Math.PI / 2); }
+        if (puck.y > H - KR) { puck.y = H - KR; puck.vy = -Math.abs(puck.vy) * BOUNCE; if (Math.abs(puck.vy) > 250) wallSpark(puck.x, H, -Math.PI / 2); }
         var inMouth = Math.abs(puck.y - H / 2) < GOAL / 2 - KR * 0.5;
-        if (puck.x < KR && !inMouth) { puck.x = KR; puck.vx = Math.abs(puck.vx) * BOUNCE; sound(220, 0.03); }
-        if (puck.x > W - KR && !inMouth) { puck.x = W - KR; puck.vx = -Math.abs(puck.vx) * BOUNCE; sound(220, 0.03); }
+        if (puck.x < KR && !inMouth) { puck.x = KR; puck.vx = Math.abs(puck.vx) * BOUNCE; if (Math.abs(puck.vx) > 250) wallSpark(0, puck.y, 0); }
+        if (puck.x > W - KR && !inMouth) { puck.x = W - KR; puck.vx = -Math.abs(puck.vx) * BOUNCE; if (Math.abs(puck.vx) > 250) wallSpark(W, puck.y, Math.PI); }
         if (puck.x < -KR) goal(1);
         else if (puck.x > W + KR) goal(0);
       }
@@ -106,6 +120,14 @@
         sound(660, 0.25); setTimeout(function () { sound(880, 0.3); }, 160);
         lobby.send(scorer, { t: 'buzz', ms: 120 });
         lobby.send(1 - scorer, { t: 'buzz', ms: 400 });
+        // Goal: burst of confetti out of the net, big ring, screen shake and a flash.
+        var gx = scorer === 0 ? W : 0, dir = scorer === 0 ? Math.PI : 0;
+        fx.emit({ x: gx, y: H / 2, count: 70, color: [COLORS[scorer], 0xffffff, COLORS[scorer]], tex: 'square', add: false,
+          speed: [300, 1100], life: [0.8, 1.6], size: 14, angle: dir, spread: 2.2, gravity: 700, drag: 1.2, spin: 14 });
+        fx.emit({ x: gx, y: H / 2, count: 30, color: COLORS[scorer], speed: [100, 500], life: [0.4, 0.9], size: 60, angle: dir, spread: 2.4 });
+        fx.ring(gx, H / 2, COLORS[scorer], 700, 0.6);
+        fx.shake(22, 450); fx.flash(0.3);
+        goalGlow[1 - scorer] = 1;
         if (score[scorer] >= WIN) {
           phase = 'over';
           banner('فاز ' + (scorer === 0 ? 'الأزرق' : 'الذهبي') + ' ' + score[scorer] + ' – ' + score[1 - scorer] +
@@ -119,109 +141,145 @@
         lobby.broadcast({ t: 'state', phase: 'play', score: score });
       }
 
-      // ---- Rendering ----
-      var bg = document.getElementById('bg'), fg = document.getElementById('fg');
-      var ctx = fg.getContext('2d'), scale = 1, sprites = {};
+      // ---- Look ----
+      var fx = GameFX.create(document.getElementById('stage'), W, H);
+      var goalGlow = [0, 0];
 
-      function layout() {
-        var stage = document.getElementById('stage').getBoundingClientRect();
-        var res = 0.8; // render below CSS size: the TV's ARM CPU is modest
-        scale = Math.min(stage.width / W, stage.height / H) * res;
-        [bg, fg].forEach(function (c) {
-          c.width = Math.round(W * scale); c.height = Math.round(H * scale);
-          c.style.width = (c.width / res) + 'px'; c.style.height = (c.height / res) + 'px';
+      // Table: dark glass with soft reflections, glowing gold centre markings and player-coloured goal ends.
+      fx.sprite(fx.texture(W, H, function (g) {
+        var R = GameFX.roundRect;
+        var base = g.createLinearGradient(0, 0, 0, H);
+        base.addColorStop(0, '#3b3d44'); base.addColorStop(1, '#202126');
+        R(g, 0, 0, W, H, 60); g.fillStyle = base; g.fill();
+        g.save(); R(g, 0, 0, W, H, 60); g.clip();
+        var side = [[0, COLORS[0]], [W, COLORS[1]]];
+        side.forEach(function (s) {
+          var gr = g.createRadialGradient(s[0], H / 2, 0, s[0], H / 2, W * 0.45);
+          gr.addColorStop(0, s[1] + '33'); gr.addColorStop(1, s[1] + '00');
+          g.fillStyle = gr; g.fillRect(0, 0, W, H);
         });
-        drawTable();
-        sprites = { p0: disc(PR, COLORS[0], true), p1: disc(PR, COLORS[1], true), puck: disc(KR, '#ffffff', false) };
-      }
-
-      // Pre-rendered glowing discs: drawImage each frame is far cheaper than shadowBlur.
-      function disc(r, color, paddle) {
-        var pad = r * 0.8, s = Math.ceil((r + pad) * 2 * scale), c = document.createElement('canvas');
-        c.width = c.height = s;
-        var g = c.getContext('2d'), m = s / 2, rr = r * scale;
-        g.shadowColor = color; g.shadowBlur = pad * scale;
-        g.fillStyle = color; g.beginPath(); g.arc(m, m, rr, 0, Math.PI * 2); g.fill();
+        // Diagonal reflections across the glass.
+        [[0.18, 0.06], [0.5, 0.035], [0.72, 0.05]].forEach(function (r) {
+          var x = W * r[0], gr = g.createLinearGradient(x, 0, x + 260, H);
+          gr.addColorStop(0, 'rgba(255,255,255,0)'); gr.addColorStop(0.5, 'rgba(255,255,255,' + r[1] + ')'); gr.addColorStop(1, 'rgba(255,255,255,0)');
+          g.fillStyle = gr; g.beginPath(); g.moveTo(x, 0); g.lineTo(x + 180, 0); g.lineTo(x + 440, H); g.lineTo(x + 260, H); g.closePath(); g.fill();
+        });
+        GameFX.noise(g, W, H, 9000, 0.025);
+        g.restore();
+        // Markings with glow.
+        g.shadowColor = '#f6cf6a'; g.shadowBlur = 18; g.strokeStyle = 'rgba(246,207,106,0.75)'; g.lineWidth = 5;
+        g.beginPath(); g.moveTo(W / 2, 24); g.lineTo(W / 2, H - 24); g.stroke();
+        g.beginPath(); g.arc(W / 2, H / 2, 130, 0, Math.PI * 2); g.stroke();
+        g.fillStyle = '#f6cf6a'; g.beginPath(); g.arc(W / 2, H / 2, 12, 0, Math.PI * 2); g.fill();
+        [[0, COLORS[0], -1], [W, COLORS[1], 1]].forEach(function (s) {
+          g.shadowColor = s[1]; g.strokeStyle = s[1]; g.globalAlpha = 0.55; g.lineWidth = 5;
+          g.beginPath(); g.arc(s[0], H / 2, GOAL * 0.78, s[2] < 0 ? -Math.PI / 2 : Math.PI / 2, s[2] < 0 ? Math.PI / 2 : Math.PI * 1.5); g.stroke();
+          g.globalAlpha = 1;
+        });
         g.shadowBlur = 0;
-        var hl = g.createRadialGradient(m - rr * 0.35, m - rr * 0.35, rr * 0.1, m, m, rr);
-        hl.addColorStop(0, 'rgba(255,255,255,0.75)'); hl.addColorStop(0.5, 'rgba(255,255,255,0.08)'); hl.addColorStop(1, 'rgba(0,0,0,0.25)');
-        g.fillStyle = hl; g.beginPath(); g.arc(m, m, rr, 0, Math.PI * 2); g.fill();
-        if (paddle) {
-          g.strokeStyle = 'rgba(255,255,255,0.55)'; g.lineWidth = rr * 0.12;
-          g.beginPath(); g.arc(m, m, rr * 0.5, 0, Math.PI * 2); g.stroke();
-        }
-        return c;
-      }
+        // Raised rim with a bright top edge.
+        R(g, 3, 3, W - 6, H - 6, 58); g.lineWidth = 6; g.strokeStyle = 'rgba(255,255,255,0.28)'; g.stroke();
+        R(g, 12, 12, W - 24, H - 24, 50); g.lineWidth = 2; g.strokeStyle = 'rgba(0,0,0,0.35)'; g.stroke();
+      }), 'bg').position.set(W / 2, H / 2);
 
-      function drawTable() {
-        var g = bg.getContext('2d'), s = scale;
-        g.setTransform(s, 0, 0, s, 0, 0);
-        g.clearRect(0, 0, W, H);
-        // Glass surface over the graphite page.
-        var surf = g.createLinearGradient(0, 0, 0, H);
-        surf.addColorStop(0, 'rgba(255,255,255,0.13)'); surf.addColorStop(1, 'rgba(255,255,255,0.05)');
-        roundRect(g, 0, 0, W, H, 60); g.fillStyle = surf; g.fill();
-        g.lineWidth = 3; g.strokeStyle = 'rgba(255,255,255,0.35)'; g.stroke();
-        // Centre line and circle.
-        g.strokeStyle = 'rgba(246,207,106,0.55)'; g.lineWidth = 4;
-        g.beginPath(); g.moveTo(W / 2, 20); g.lineTo(W / 2, H - 20); g.stroke();
-        g.beginPath(); g.arc(W / 2, H / 2, 120, 0, Math.PI * 2); g.stroke();
-        g.fillStyle = 'rgba(246,207,106,0.7)'; g.beginPath(); g.arc(W / 2, H / 2, 10, 0, Math.PI * 2); g.fill();
-        // Goal creases and mouths in each player's colour.
-        [[0, COLORS[0]], [1, COLORS[1]]].forEach(function (gc) {
-          var x = gc[0] === 0 ? 0 : W;
-          g.strokeStyle = gc[1]; g.globalAlpha = 0.45; g.lineWidth = 4;
-          g.beginPath(); g.arc(x, H / 2, GOAL * 0.75, gc[0] === 0 ? -Math.PI / 2 : Math.PI / 2, gc[0] === 0 ? Math.PI / 2 : Math.PI * 1.5); g.stroke();
-          g.globalAlpha = 1; g.lineWidth = 14; g.lineCap = 'round';
-          g.beginPath(); g.moveTo(x, H / 2 - GOAL / 2); g.lineTo(x, H / 2 + GOAL / 2); g.stroke();
+      // Goal mouths: glowing bars that pulse when a goal goes in.
+      var goalTex = fx.texture(60, GOAL + 120, function (g, w, h) {
+        g.shadowColor = '#fff'; g.shadowBlur = 26; g.fillStyle = '#fff';
+        GameFX.roundRect(g, w / 2 - 7, 60, 14, h - 120, 7); g.fill();
+      });
+      var goals = [0, 1].map(function (i) {
+        var s = fx.sprite(goalTex, 'glow', { add: true, tint: COLORS[i] });
+        s.position.set(i === 0 ? 4 : W - 4, H / 2);
+        return s;
+      });
+
+      function discTex(r, color, paddle) {
+        var pad = r * 0.9;
+        return fx.texture((r + pad) * 2, (r + pad) * 2, function (g, w) {
+          var m = w / 2;
+          g.shadowColor = color; g.shadowBlur = pad * 1.1;
+          var body = g.createRadialGradient(m - r * 0.3, m - r * 0.35, r * 0.1, m, m, r);
+          body.addColorStop(0, '#ffffff'); body.addColorStop(0.25, color); body.addColorStop(1, shade(color, -0.45));
+          g.fillStyle = body; g.beginPath(); g.arc(m, m, r, 0, Math.PI * 2); g.fill();
+          g.shadowBlur = 0;
+          if (paddle) {
+            // Domed handle in the middle with a rim and specular highlight.
+            g.strokeStyle = 'rgba(255,255,255,0.65)'; g.lineWidth = r * 0.08;
+            g.beginPath(); g.arc(m, m, r * 0.92, 0, Math.PI * 2); g.stroke();
+            var knob = g.createRadialGradient(m - r * 0.15, m - r * 0.2, r * 0.05, m, m, r * 0.45);
+            knob.addColorStop(0, '#ffffff'); knob.addColorStop(0.5, shade(color, 0.2)); knob.addColorStop(1, shade(color, -0.35));
+            g.fillStyle = knob; g.beginPath(); g.arc(m, m, r * 0.45, 0, Math.PI * 2); g.fill();
+          }
+          g.fillStyle = 'rgba(255,255,255,0.55)';
+          g.beginPath(); g.ellipse(m - r * 0.35, m - r * 0.45, r * 0.32, r * 0.16, -0.6, 0, Math.PI * 2); g.fill();
         });
       }
-
-      function roundRect(g, x, y, w, h, r) {
-        g.beginPath(); g.moveTo(x + r, y); g.arcTo(x + w, y, x + w, y + h, r); g.arcTo(x + w, y + h, x, y + h, r);
-        g.arcTo(x, y + h, x, y, r); g.arcTo(x, y, x + w, y, r); g.closePath();
+      function shade(hex, k) {
+        var n = parseInt(hex.slice(1), 16), r = n >> 16, gg = (n >> 8) & 255, b = n & 255;
+        var f = function (c) { return Math.max(0, Math.min(255, Math.round(k < 0 ? c * (1 + k) : c + (255 - c) * k))); };
+        return 'rgb(' + f(r) + ',' + f(gg) + ',' + f(b) + ')';
       }
 
-      function blit(img, x, y) { ctx.drawImage(img, x * scale - img.width / 2, y * scale - img.height / 2); }
+      var shadows = [0, 1, 2].map(function (i) { var s = fx.sprite(fx.tex.shadow, 'shadow'); s.scale.set((i < 2 ? PR : KR) * 2.6 / 96); return s; });
+      var paddleSprites = [0, 1].map(function (i) { return fx.sprite(discTex(PR, COLORS[i], true), 'obj'); });
+      var streakTex = fx.texture(300, 60, function (g, w, h) {
+        var gr = g.createLinearGradient(0, 0, w, 0);
+        gr.addColorStop(0, 'rgba(255,255,255,0)'); gr.addColorStop(1, 'rgba(255,255,255,0.8)');
+        g.fillStyle = gr; g.beginPath(); g.moveTo(0, h / 2); g.lineTo(w - h / 2, 4); g.arc(w - h / 2, h / 2, h / 2 - 4, -Math.PI / 2, Math.PI / 2); g.closePath(); g.fill();
+      });
+      var streak = fx.sprite(streakTex, 'glow', { add: true });
+      streak.anchor.set(1, 0.5);
+      var puckSprite = fx.sprite(discTex(KR, '#ffffff', false), 'obj');
+      var countText = fx.text('', W / 2, H / 2 - 190, 0xffffff, 170);
 
-      function render() {
-        ctx.setTransform(1, 0, 0, 1, 0, 0);
-        ctx.clearRect(0, 0, fg.width, fg.height);
-        if (!paddles) return;
+      function render(dt) {
+        var show = !!paddles;
+        paddleSprites.forEach(function (s, i) { s.visible = show; if (show) s.position.set(paddles[i].x, paddles[i].y); });
+        shadows.forEach(function (s, i) {
+          var o = i < 2 ? (paddles && paddles[i]) : puck;
+          s.visible = !!o; if (o) s.position.set(o.x + 10, o.y + 14);
+        });
+        puckSprite.visible = !!puck && phase !== 'lobby';
+        streak.visible = false;
         if (puck) {
-          for (var i = 0; i < trail.length; i++) {
-            ctx.globalAlpha = (i + 1) / trail.length * 0.25;
-            blit(sprites.puck, trail[i][0], trail[i][1]);
+          puckSprite.position.set(puck.x, puck.y);
+          var sp = Math.sqrt(puck.vx * puck.vx + puck.vy * puck.vy);
+          if (sp > 500 && phase === 'play') {
+            streak.visible = true; streak.position.set(puck.x, puck.y);
+            streak.rotation = Math.atan2(puck.vy, puck.vx);
+            streak.scale.set(Math.min(1.6, sp / 2000) / fx.px, 0.9 / fx.px);
+            streak.alpha = Math.min(0.9, sp / 3000);
           }
-          ctx.globalAlpha = 1;
-          blit(sprites.puck, puck.x, puck.y);
         }
-        blit(sprites.p0, paddles[0].x, paddles[0].y);
-        blit(sprites.p1, paddles[1].x, paddles[1].y);
+        goals.forEach(function (s, i) {
+          goalGlow[i] = Math.max(0, goalGlow[i] - dt * 0.8);
+          s.alpha = 0.55 + 0.25 * Math.sin(performance.now() / 400 + i) + goalGlow[i] * 0.8;
+        });
         if (phase === 'countdown') {
-          var n = Math.ceil((phaseEnd - Date.now()) / 1000);
-          ctx.setTransform(scale, 0, 0, scale, 0, 0);
-          ctx.fillStyle = 'rgba(255,255,255,0.85)'; ctx.font = '700 160px Tajawal, sans-serif'; ctx.textAlign = 'center';
-          ctx.fillText(String(Math.max(1, n)), W / 2, H / 2 - 160);
-        }
+          var left = (phaseEnd - Date.now()) / 1000, n = Math.max(1, Math.ceil(left)), f = left - Math.floor(left);
+          countText.text = String(n); countText.alpha = 0.3 + 0.7 * f;
+          countText.scale.set((0.8 + 0.5 * f) / fx.px);
+        } else countText.text = '';
       }
 
       // ---- Loop ----
-      var last = performance.now(), acc = 0, STEP = 1 / 240;
-      function frame(now) {
-        acc += Math.min(0.1, (now - last) / 1000); last = now;
-        while (acc >= STEP) {
-          if (paddles && phase !== 'lobby') {
-            stepPaddle(paddles[0], 0, STEP); stepPaddle(paddles[1], 1, STEP);
-            if (phase === 'play') { stepPuck(STEP); collide(paddles[0], 0); collide(paddles[1], 1); }
+      var acc = 0, STEP = 1 / 240;
+      fx.app.ticker.add(function () {
+        var dt = Math.min(0.1, fx.app.ticker.deltaMS / 1000);
+        if (hitStop > 0) { hitStop -= dt; } else {
+          acc += dt;
+          while (acc >= STEP) {
+            if (paddles && phase !== 'lobby') {
+              stepPaddle(paddles[0], 0, STEP); stepPaddle(paddles[1], 1, STEP);
+              if (phase === 'play') { stepPuck(STEP); collide(paddles[0], 0); collide(paddles[1], 1); }
+            }
+            acc -= STEP;
           }
-          acc -= STEP;
         }
         if (phase === 'countdown' && Date.now() >= phaseEnd) phase = 'play';
-        if (puck && phase === 'play') { trail.push([puck.x, puck.y]); if (trail.length > 6) trail.shift(); }
-        render();
-        requestAnimationFrame(frame);
-      }
+        fx.update(dt);
+        render(dt);
+      });
 
       // ---- HUD, banner, sound ----
       function showScore() {
@@ -253,9 +311,6 @@
       window.hockeyState = function () { return JSON.parse(JSON.stringify({ phase: phase, score: score, puck: puck, paddles: paddles })); };
 
       resetPaddles();
-      layout();
-      window.addEventListener('resize', layout);
-      requestAnimationFrame(frame);
     })();
   </script>
 </body>

@@ -8,8 +8,10 @@
   <script src="https://cdn.jsdelivr.net/npm/peerjs@1.5.4/dist/peerjs.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/mqtt@5.10.1/dist/mqtt.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/qrcode-generator@1.4.4/qrcode.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/pixi.js@7.4.2/dist/pixi.min.js"></script>
   <script src="link.js"></script>
   <script src="lobby.js"></script>
+  <script src="fx.js"></script>
 </head>
 <body class="tv">
   <div id="hud">
@@ -17,16 +19,17 @@
     <div class="hud-title">مبارزة الأثر <span class="dim">· الفائز من يكسب 5 جولات</span></div>
     <div class="score" id="s0"><b>0</b><span class="dotc cyan"></span></div>
   </div>
-  <div id="stage"><canvas id="bg"></canvas><canvas id="trails"></canvas><canvas id="fg"></canvas></div>
+  <div id="stage"></div>
   <div id="banner"></div>
   <div id="lobby" class="lobby glass"></div>
 
   <script>
     // TV side of the light-trail duel: two riders on a grid leave a wall of light behind
     // them; touching any wall or trail loses the round. Phones send absolute directions.
+    // Trails are glowing ribbons stamped into a persistent texture (fx.js decals).
     (function () {
       'use strict';
-      var COLS = 96, ROWS = 54, WIN = 5;
+      var COLS = 96, ROWS = 54, CELL = 1600 / COLS, W = 1600, H = 900, WIN = 5;
       var COLORS = ['#5fd0ff', '#f6cf6a'];
       var DIRS = { u: [0, -1], d: [0, 1], l: [-1, 0], r: [1, 0] };
       var START_TICK = 75, MIN_TICK = 45; // ms per cell; speeds up during a round
@@ -49,17 +52,20 @@
         onLeft: function () { phase = 'lobby'; },
       });
 
+      function cx(x) { return (x + 0.5) * CELL; }
+      function cy(y) { return (y + 0.5) * CELL; }
+
       function newRound() {
         grid = new Uint8Array(COLS * ROWS);
         riders = [
           { x: 12, y: ROWS >> 1, dir: 'r', queue: [], alive: true },
           { x: COLS - 13, y: ROWS >> 1, dir: 'l', queue: [], alive: true },
         ];
-        riders.forEach(function (r, i) { grid[r.y * COLS + r.x] = i + 1; });
-        clearTrails();
-        riders.forEach(function (r, i) { paintCell(r.x, r.y, i); });
+        riders.forEach(function (r, i) { grid[r.y * COLS + r.x] = i + 1; r.px = r.x; r.py = r.y; });
+        fx.clearDecals();
         tickMs = START_TICK;
         phase = 'countdown'; phaseEnd = Date.now() + 3000;
+        riders.forEach(function (r, i) { fx.ring(cx(r.x), cy(r.y), COLORS[i], 160, 0.6); });
         lobby.broadcast({ t: 'state', phase: 'play', score: score });
       }
 
@@ -80,17 +86,27 @@
         });
         riders.forEach(function (r, i) {
           if (!r.alive) return;
-          r.x = r.nx; r.y = r.ny;
+          paintSegment(r.x, r.y, r.nx, r.ny, i);
+          r.px = r.x; r.py = r.y; r.x = r.nx; r.y = r.ny;
           grid[r.y * COLS + r.x] = i + 1;
-          paintCell(r.x, r.y, i);
+          fx.emit({ x: cx(r.x), y: cy(r.y), count: 2, color: COLORS[i], speed: [20, 90], life: [0.3, 0.6], size: 16 });
         });
         if (!riders[0].alive || !riders[1].alive) endRound();
         tickMs = Math.max(MIN_TICK, tickMs - 0.15);
       }
 
+      function crash(r, i) {
+        var x = cx(r.x), y = cy(r.y);
+        fx.emit({ x: x, y: y, count: 40, color: [COLORS[i], 0xffffff], tex: 'spark', speed: [300, 1200], life: [0.3, 0.8], size: 40, drag: 2.5 });
+        fx.emit({ x: x, y: y, count: 16, color: COLORS[i], speed: [60, 300], life: [0.5, 1.1], size: 90 });
+        fx.ring(x, y, COLORS[i], 500, 0.55);
+      }
+
       function endRound() {
         var a = riders[0].alive, b = riders[1].alive;
         sound(140, 0.5);
+        riders.forEach(function (r, i) { if (!r.alive) crash(r, i); });
+        fx.shake(20, 450); fx.flash(0.22);
         if (a === b) {
           banner('تعادل', '#ffffff', 1500);
           riders.forEach(function (_, i) { lobby.send(i, { t: 'buzz', ms: 300 }); });
@@ -111,74 +127,80 @@
         phase = 'between'; phaseEnd = Date.now() + 1800;
       }
 
-      // ---- Rendering: trails are painted once per new cell onto their own canvas ----
-      var bg = document.getElementById('bg'), tr = document.getElementById('trails'), fg = document.getElementById('fg');
-      var cell = 10, heads = [];
+      // ---- Look ----
+      var fx = GameFX.create(document.getElementById('stage'), W, H);
 
-      function layout() {
-        var stage = document.getElementById('stage').getBoundingClientRect();
-        cell = Math.floor(Math.min(stage.width / COLS, stage.height / ROWS));
-        [bg, tr, fg].forEach(function (c) { c.width = COLS * cell; c.height = ROWS * cell; });
-        drawBoard();
-        heads = COLORS.map(function (c) { return glow(c); });
-        if (grid) { clearTrails(); for (var i = 0; i < grid.length; i++) if (grid[i]) paintCell(i % COLS, (i / COLS) | 0, grid[i] - 1); }
-      }
-
-      function drawBoard() {
-        var g = bg.getContext('2d'), w = bg.width, h = bg.height;
-        g.clearRect(0, 0, w, h);
-        var surf = g.createLinearGradient(0, 0, 0, h);
-        surf.addColorStop(0, 'rgba(255,255,255,0.12)'); surf.addColorStop(1, 'rgba(255,255,255,0.04)');
-        g.fillStyle = surf; g.fillRect(0, 0, w, h);
+      // Board: dark glass with a faint grid that fades toward the edges, and a lit rim.
+      fx.sprite(fx.texture(W, H, function (g) {
+        var R = GameFX.roundRect;
+        var base = g.createLinearGradient(0, 0, 0, H);
+        base.addColorStop(0, '#2e3036'); base.addColorStop(1, '#17181c');
+        R(g, 0, 0, W, H, 34); g.fillStyle = base; g.fill();
+        g.save(); R(g, 0, 0, W, H, 34); g.clip();
         g.strokeStyle = 'rgba(255,255,255,0.05)'; g.lineWidth = 1;
-        for (var x = 6; x < COLS; x += 6) { g.beginPath(); g.moveTo(x * cell + 0.5, 0); g.lineTo(x * cell + 0.5, h); g.stroke(); }
-        for (var y = 6; y < ROWS; y += 6) { g.beginPath(); g.moveTo(0, y * cell + 0.5); g.lineTo(w, y * cell + 0.5); g.stroke(); }
-        g.strokeStyle = 'rgba(255,255,255,0.4)'; g.lineWidth = 3; g.strokeRect(1.5, 1.5, w - 3, h - 3);
+        for (var x = CELL * 4; x < W; x += CELL * 4) { g.beginPath(); g.moveTo(x, 0); g.lineTo(x, H); g.stroke(); }
+        for (var y = CELL * 4; y < H; y += CELL * 4) { g.beginPath(); g.moveTo(0, y); g.lineTo(W, y); g.stroke(); }
+        [[0, COLORS[0]], [W, COLORS[1]]].forEach(function (s) {
+          var gr = g.createRadialGradient(s[0], H / 2, 0, s[0], H / 2, W * 0.5);
+          gr.addColorStop(0, s[1] + '26'); gr.addColorStop(1, s[1] + '00');
+          g.fillStyle = gr; g.fillRect(0, 0, W, H);
+        });
+        var vig = g.createRadialGradient(W / 2, H / 2, H * 0.3, W / 2, H / 2, W * 0.65);
+        vig.addColorStop(0, 'rgba(0,0,0,0)'); vig.addColorStop(1, 'rgba(0,0,0,0.45)');
+        g.fillStyle = vig; g.fillRect(0, 0, W, H);
+        GameFX.noise(g, W, H, 7000, 0.02);
+        g.restore();
+        R(g, 3, 3, W - 6, H - 6, 32); g.lineWidth = 5; g.strokeStyle = 'rgba(255,255,255,0.3)'; g.stroke();
+      }), 'bg').position.set(W / 2, H / 2);
+
+      // A trail segment: wide soft halo + bright core, stamped once into the decal texture.
+      function paintSegment(x0, y0, x1, y1, i) {
+        var c = PIXI.utils.string2hex(COLORS[i]), g = new PIXI.Graphics();
+        g.lineStyle({ width: CELL * 1.6, color: c, alpha: 0.12, cap: 'round' }); g.moveTo(cx(x0), cy(y0)); g.lineTo(cx(x1), cy(y1));
+        g.lineStyle({ width: CELL * 0.85, color: c, alpha: 0.55, cap: 'round' }); g.moveTo(cx(x0), cy(y0)); g.lineTo(cx(x1), cy(y1));
+        g.lineStyle({ width: CELL * 0.28, color: 0xffffff, alpha: 0.85, cap: 'round' }); g.moveTo(cx(x0), cy(y0)); g.lineTo(cx(x1), cy(y1));
+        fx.decal(g);
       }
 
-      function clearTrails() { tr.getContext('2d').clearRect(0, 0, tr.width, tr.height); }
-      function paintCell(x, y, i) {
-        var g = tr.getContext('2d');
-        g.fillStyle = COLORS[i]; g.globalAlpha = 0.85;
-        g.fillRect(x * cell + 1, y * cell + 1, cell - 2, cell - 2);
-        g.globalAlpha = 1;
-      }
-      function glow(color) {
-        var s = cell * 5, c = document.createElement('canvas'); c.width = c.height = s;
-        var g = c.getContext('2d'), grad = g.createRadialGradient(s / 2, s / 2, 0, s / 2, s / 2, s / 2);
-        grad.addColorStop(0, '#ffffff'); grad.addColorStop(0.15, color); grad.addColorStop(1, 'rgba(0,0,0,0)');
-        g.fillStyle = grad; g.fillRect(0, 0, s, s);
-        return c;
-      }
+      var headTex = fx.texture(120, 120, function (g, w) {
+        var gr = g.createRadialGradient(w / 2, w / 2, 0, w / 2, w / 2, w / 2);
+        gr.addColorStop(0, 'rgba(255,255,255,1)'); gr.addColorStop(0.18, 'rgba(255,255,255,0.95)'); gr.addColorStop(0.4, 'rgba(255,255,255,0.35)'); gr.addColorStop(1, 'rgba(255,255,255,0)');
+        g.fillStyle = gr; g.fillRect(0, 0, w, w);
+      });
+      var heads = [0, 1].map(function (i) { return fx.sprite(headTex, 'glow', { add: true, tint: COLORS[i] }); });
+      var cores = [0, 1].map(function () { var s = fx.sprite(fx.tex.dot, 'top', { add: true }); s.scale.set(26 / 64); return s; });
+      var countText = fx.text('', W / 2, H * 0.4, 0xffffff, 170);
 
       function render() {
-        var g = fg.getContext('2d');
-        g.clearRect(0, 0, fg.width, fg.height);
-        if (!riders) return;
-        riders.forEach(function (r, i) {
-          var img = heads[i];
-          g.globalAlpha = r.alive ? 1 : 0.35;
-          g.drawImage(img, (r.x + 0.5) * cell - img.width / 2, (r.y + 0.5) * cell - img.height / 2);
+        var t = performance.now();
+        heads.forEach(function (h, i) {
+          var r = riders && riders[i];
+          h.visible = cores[i].visible = !!r && phase !== 'lobby';
+          if (!r) return;
+          // Glide between cells so the heads move smoothly even though the grid steps.
+          var k = phase === 'play' ? Math.min(1, (Date.now() - lastTick) / tickMs) : 1;
+          var x = r.alive ? cx(r.x) + DIRS[r.dir][0] * CELL * k : cx(r.x), y = r.alive ? cy(r.y) + DIRS[r.dir][1] * CELL * k : cy(r.y);
+          h.position.set(x, y); cores[i].position.set(x, y);
+          h.alpha = r.alive ? 0.9 + 0.1 * Math.sin(t / 90) : 0.25; cores[i].alpha = r.alive ? 1 : 0.2;
+          h.scale.set((r.alive ? 1 + 0.08 * Math.sin(t / 120) : 0.7) / fx.px);
         });
-        g.globalAlpha = 1;
         if (phase === 'countdown') {
-          var n = Math.max(1, Math.ceil((phaseEnd - Date.now()) / 1000));
-          g.fillStyle = 'rgba(255,255,255,0.85)'; g.font = '700 ' + (cell * 12) + 'px Tajawal, sans-serif'; g.textAlign = 'center';
-          g.fillText(String(n), fg.width / 2, fg.height * 0.42);
-        }
+          var left = (phaseEnd - Date.now()) / 1000, n = Math.max(1, Math.ceil(left)), f = left - Math.floor(left);
+          countText.text = String(n); countText.alpha = 0.3 + 0.7 * f; countText.scale.set((0.8 + 0.5 * f) / fx.px);
+        } else countText.text = '';
       }
 
-      function frame() {
-        var now = Date.now();
+      fx.app.ticker.add(function () {
+        var dt = Math.min(0.1, fx.app.ticker.deltaMS / 1000), now = Date.now();
         if (phase === 'countdown' && now >= phaseEnd) { phase = 'play'; lastTick = now; }
         if (phase === 'between' && now >= phaseEnd) newRound();
         if (phase === 'play') {
           var guard = 0;
           while (now - lastTick >= tickMs && phase === 'play' && guard++ < 4) { lastTick += tickMs; tick(); }
         }
+        fx.update(dt);
         render();
-        requestAnimationFrame(frame);
-      }
+      });
 
       function showScore() {
         document.querySelector('#s0 b').textContent = score[0];
@@ -208,10 +230,6 @@
       window.trailState = function () {
         return JSON.parse(JSON.stringify({ phase: phase, score: score, riders: riders, tickMs: tickMs }));
       };
-
-      layout();
-      window.addEventListener('resize', layout);
-      requestAnimationFrame(frame);
     })();
   </script>
 </body>
