@@ -7,8 +7,10 @@
      blurred again (no glass on glass): inner items use plain fills.
    - The sky carries saturated radial glows so the frost has something to work on;
      blur over a flat gradient is invisible.
-   - Fill leans to the legible side (white text on a dark tint). No refraction:
-     SVG lensing inside backdrop-filter is Chromium-only and the TV engine is unknown.
+   - Static glass (no backdrop-filter): the VIDAA TV browser has no backdrop blur,
+     and blur over this smooth sky is invisible anyway. The glass is carried by a
+     translucent light fill, a bright top rim, a specular sheen and a soft shadow,
+     so it looks the same on every engine at zero per-frame cost.
    - Tint only marks the primary item: the next prayer. */
 @font-face { font-family: Tajawal; font-weight: 400; src: url(fonts/tajawal_regular.ttf) format('truetype'); }
 @font-face { font-family: Tajawal; font-weight: 700; src: url(fonts/tajawal_bold.ttf) format('truetype'); }
@@ -22,14 +24,13 @@
   --dim: rgba(255, 255, 255, 0.74);
 
   /* Glass tokens: one knob per property. */
-  --glass-fill: rgba(18, 22, 44, 0.34);        /* regular tier over the dark-to-mid sky */
-  --glass-fill-solid: rgba(18, 22, 44, 0.66);  /* fallback when backdrop-filter is missing */
-  --glass-blur: calc(26 * var(--u));
-  --glass-saturate: 150%;
-  --glass-edge: rgba(255, 255, 255, 0.20);     /* hairline */
-  --glass-rim: rgba(255, 255, 255, 0.38);      /* top inner highlight */
-  --glass-shadow: 0 calc(18 * var(--u)) calc(48 * var(--u)) rgba(6, 8, 28, 0.34);
-  --inner-fill: rgba(255, 255, 255, 0.07);     /* sub-areas inside a glass surface */
+  --glass-top: rgba(255, 255, 255, 0.17);      /* fill at the top edge (catches light) */
+  --glass-bottom: rgba(255, 255, 255, 0.06);   /* fill at the bottom edge */
+  --glass-tint: rgba(10, 14, 36, 0.16);        /* keeps white text legible on bright skies */
+  --glass-edge: rgba(255, 255, 255, 0.24);     /* hairline */
+  --glass-rim: rgba(255, 255, 255, 0.55);      /* top inner highlight */
+  --glass-shadow: 0 calc(16 * var(--u)) calc(44 * var(--u)) rgba(6, 8, 28, 0.30);
+  --inner-fill: rgba(255, 255, 255, 0.08);     /* sub-areas inside a glass surface */
 
   --r-panel: calc(28 * var(--u));
   --r-inner: calc(16 * var(--u));              /* concentric: panel radius minus padding */
@@ -49,32 +50,27 @@ html, body {
 /* ---- Glass material ---- */
 .glass {
   position: relative;
-  background: var(--glass-fill);
-  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
-  backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
+  background: linear-gradient(180deg, var(--glass-top), var(--glass-bottom)), var(--glass-tint);
   border: 1px solid var(--glass-edge);
+  border-top-color: rgba(255, 255, 255, 0.42);
   border-radius: var(--r-panel);
-  box-shadow: var(--glass-shadow), inset 0 1px 0 var(--glass-rim), inset 0 -1px 0 rgba(255, 255, 255, 0.06);
+  box-shadow: var(--glass-shadow),
+    inset 0 1px 1px var(--glass-rim),
+    inset 0 -1px 1px rgba(255, 255, 255, 0.10),
+    inset 0 0 calc(24 * var(--u)) rgba(255, 255, 255, 0.05);
 }
-/* Specular sheen: light from the upper right (RTL reading start). */
+/* Specular sheen: a soft arc of light across the top, brighter at the reading start (right). */
 .glass::before {
   content: ''; position: absolute; top: 0; left: 0; right: 0; bottom: 0;
   border-radius: inherit; pointer-events: none;
-  background: linear-gradient(215deg, rgba(255, 255, 255, 0.16) 0%, rgba(255, 255, 255, 0.03) 32%, rgba(255, 255, 255, 0) 55%);
+  background: radial-gradient(120% 70% at 75% -25%, rgba(255, 255, 255, 0.22), rgba(255, 255, 255, 0) 60%);
 }
 .glass > * { position: relative; }
-@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
-  .glass { background: var(--glass-fill-solid); }
-}
 
-/* Thmanyah word images: masks painted with the text colour, sized in em. */
-.w {
-  display: inline-block;
-  background-color: currentColor;
-  -webkit-mask-size: 100% 100%; mask-size: 100% 100%;
-  -webkit-mask-repeat: no-repeat; mask-repeat: no-repeat;
-}
-img.w { background: none; }
+/* Thmanyah word images, sized in em so they follow the surrounding font size. */
+img.w { display: inline-block; }
+.lbl img.w, .muted img.w, .stat .k img.w, .day .x img.w, #ampm img.w,
+.pc.past img.w, .pc.minor img.w { opacity: 0.74; }
 
 main {
   position: fixed; top: 0; left: 0; right: 0; bottom: calc(62 * var(--u));
@@ -82,7 +78,7 @@ main {
   padding: calc(20 * var(--u)) calc(30 * var(--u)) calc(12 * var(--u));
 }
 .top { flex: 1; display: flex; min-height: 0; }
-.clock-col { flex: 1.15; display: flex; flex-direction: column; margin-left: calc(24 * var(--u)); }
+.clock-col { flex: 1.15; min-height: 0; display: flex; flex-direction: column; margin-left: calc(24 * var(--u)); }
 .weather { flex: 1; margin-bottom: calc(14 * var(--u)); padding: calc(14 * var(--u)) calc(20 * var(--u)); display: flex; flex-direction: column; }
 
 .muted { color: var(--dim); font-size: calc(18 * var(--u)); }
@@ -92,60 +88,54 @@ main {
 .spacer { flex: 1; }
 
 /* ---- Clock column (on the sky, not glass) ---- */
-.greeting-wrap { filter: drop-shadow(0 calc(2 * var(--u)) calc(6 * var(--u)) rgba(0, 0, 0, 0.35)); }
-.greeting { font-size: calc(40 * var(--u)); line-height: 1.2; }
+.greeting { font-size: calc(38 * var(--u)); line-height: 1.2; }
 .clock { display: flex; align-items: flex-end; line-height: 1; text-shadow: 0 calc(2 * var(--u)) calc(10 * var(--u)) rgba(0, 0, 0, 0.3); }
-#hm { font-size: calc(124 * var(--u)); font-weight: 400; letter-spacing: calc(-2 * var(--u)); }
-.clock-side { display: flex; flex-direction: column; align-items: center; margin-right: calc(12 * var(--u)); padding-bottom: calc(20 * var(--u)); }
-#sec { font-size: calc(32 * var(--u)); font-weight: 700; color: var(--dim); }
-#ampm { font-size: calc(22 * var(--u)); color: var(--dim); }
-.date { font-size: calc(27 * var(--u)); font-weight: 700; line-height: 1.35; filter: drop-shadow(0 calc(1 * var(--u)) calc(4 * var(--u)) rgba(0, 0, 0, 0.3)); }
+#hm { font-size: calc(112 * var(--u)); font-weight: 400; letter-spacing: calc(-2 * var(--u)); }
+.clock-side { margin-right: calc(14 * var(--u)); padding-bottom: calc(18 * var(--u)); font-size: calc(24 * var(--u)); }
+.date { font-size: calc(26 * var(--u)); font-weight: 700; line-height: 1.4; }
 
 .next-card {
   align-self: flex-start;
-  margin-bottom: calc(14 * var(--u));
-  padding: calc(12 * var(--u)) calc(22 * var(--u));
-  background: linear-gradient(rgba(246, 207, 106, 0.14), rgba(246, 207, 106, 0.06)), var(--glass-fill);
-  border-color: rgba(246, 207, 106, 0.42);
+  margin-bottom: calc(12 * var(--u));
+  padding: calc(8 * var(--u)) calc(22 * var(--u));
+  background: linear-gradient(180deg, rgba(246, 207, 106, 0.22), rgba(246, 207, 106, 0.07)), var(--glass-tint);
+  border-color: rgba(246, 207, 106, 0.45);
+  border-top-color: rgba(255, 232, 170, 0.7);
 }
 .now-banner { font-size: calc(21 * var(--u)); color: var(--gold); font-weight: 700; }
 .now-banner:empty { display: none; }
 .next-row { display: flex; align-items: center; }
 .next-row > div + div { margin-right: calc(30 * var(--u)); }
 .lbl { font-size: calc(19 * var(--u)); color: var(--dim); }
-.next-name { font-size: calc(32 * var(--u)); font-weight: 700; }
-.countdown { font-size: calc(42 * var(--u)); font-weight: 800; color: var(--gold); direction: ltr; text-align: right; }
+.next-name { font-size: calc(29 * var(--u)); font-weight: 700; }
+.countdown { font-size: calc(38 * var(--u)); font-weight: 800; color: var(--gold); direction: ltr; text-align: right; }
 
 /* ---- Weather panel ---- */
-.w-city { font-size: calc(17 * var(--u)); color: var(--dim); }
 .w-now { display: flex; align-items: center; }
-.w-icon { font-size: calc(44 * var(--u)); margin-left: calc(12 * var(--u)); }
-.w-temp { font-size: calc(52 * var(--u)); font-weight: 400; line-height: 1.05; }
-.w-desc { font-size: calc(21 * var(--u)); }
+.w-icon { font-size: calc(52 * var(--u)); margin-left: calc(14 * var(--u)); }
+.w-temp { font-size: calc(60 * var(--u)); font-weight: 400; line-height: 1.05; }
+.w-desc { font-size: calc(24 * var(--u)); }
 .w-side { margin-right: auto; display: flex; flex-direction: column; align-items: flex-end; }
-.w-side .muted { font-size: calc(17 * var(--u)); }
+.w-range { font-size: calc(24 * var(--u)); font-weight: 700; color: var(--dim); direction: ltr; }
 .khareef {
-  font-size: calc(16 * var(--u)); color: #0b2a1a;
-  background: rgba(155, 227, 176, 0.9); border-radius: 999px; padding: calc(2 * var(--u)) calc(10 * var(--u));
+  font-size: calc(17 * var(--u)); margin-bottom: calc(6 * var(--u));
+  background: rgba(70, 170, 110, 0.55); border-radius: 999px; padding: calc(2 * var(--u)) calc(12 * var(--u));
 }
-.stats { display: flex; justify-content: space-between; margin-top: calc(8 * var(--u)); }
-.stat { text-align: center; }
-.stat .k { font-size: calc(16 * var(--u)); color: var(--dim); }
-.stat .v { font-size: calc(22 * var(--u)); font-weight: 700; }
-.rule { height: 1px; background: rgba(255, 255, 255, 0.16); margin: calc(10 * var(--u)) 0 calc(6 * var(--u)); }
-.w-fc { font-size: calc(17 * var(--u)); color: var(--dim); }
-.days { flex: 1; display: flex; min-height: 0; margin-top: calc(6 * var(--u)); }
+.stats { display: flex; margin-top: calc(10 * var(--u)); }
+.stat { flex: 1; display: flex; align-items: baseline; justify-content: center; background: var(--inner-fill); border-radius: var(--r-inner); padding: calc(6 * var(--u)) 0; }
+.stat + .stat { margin-right: calc(10 * var(--u)); }
+.stat .k { font-size: calc(20 * var(--u)); margin-left: calc(10 * var(--u)); }
+.stat .v { font-size: calc(26 * var(--u)); font-weight: 700; }
+.days { flex: 1; display: flex; min-height: 0; margin-top: calc(10 * var(--u)); }
 .day {
   flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: space-evenly;
   background: var(--inner-fill); border-radius: var(--r-inner); padding: calc(6 * var(--u));
 }
 .day + .day { margin-right: calc(10 * var(--u)); }
-.day .n { font-size: calc(19 * var(--u)); }
-.day .i { font-size: calc(20 * var(--u)); }
-.day .t { font-size: calc(18 * var(--u)); font-weight: 700; white-space: nowrap; }
-.day .s { font-size: calc(15 * var(--u)); color: var(--dim); white-space: nowrap; }
-.day .x { font-size: calc(13 * var(--u)); color: var(--dim); white-space: nowrap; }
-.day .r { font-size: calc(13 * var(--u)); color: #9fd3ff; }
+.day .n { font-size: calc(22 * var(--u)); }
+.day .i { font-size: calc(28 * var(--u)); }
+.day .t { font-size: calc(22 * var(--u)); font-weight: 700; white-space: nowrap; }
+.day .x { font-size: calc(17 * var(--u)); white-space: nowrap; color: #bfe3ff; }
 
 /* ---- Prayer bar: one glass surface, plain fills inside ---- */
 .prayers { display: flex; height: calc(110 * var(--u)); padding: calc(8 * var(--u)); }
@@ -199,8 +189,9 @@ main {
 .hidden { display: none; }
 .settings-card {
   width: calc(620 * var(--u)); padding: calc(28 * var(--u));
-  --glass-fill: rgba(22, 26, 52, 0.78);
+  --glass-tint: rgba(22, 26, 52, 0.82); /* thick tier: text-dense sheet */
 }
+.rule { height: 1px; background: rgba(255, 255, 255, 0.16); }
 .settings-card > * + * { margin-top: calc(14 * var(--u)); }
 .settings-title { font-size: calc(30 * var(--u)); font-weight: 800; }
 .preview { font-size: calc(22 * var(--u)); }

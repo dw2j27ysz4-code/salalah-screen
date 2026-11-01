@@ -55,7 +55,7 @@ createServer(async (req, res) => {
       const { key, png, meta } = await readBody(req);
       if (!/^[a-z0-9_]+$/.test(key)) return send(res, 400, 'text/plain', 'bad key');
       await writeFile(join(OUT, key + '.png'), Buffer.from(png.split(',')[1], 'base64'));
-      manifest[key] = meta;
+      if (meta) manifest[key] = meta;
       return send(res, 200, 'application/json', '{"ok":true}');
     }
     if (req.method === 'POST' && path === '/done') {

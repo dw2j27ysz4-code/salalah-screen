@@ -30,20 +30,15 @@
   function setHtml(el, html) { if (el.getAttribute('data-html') !== html) { el.innerHTML = html; el.setAttribute('data-html', html); } }
 
   // ---- Thmanyah word images (labels.js, made by tools/render-labels.mjs) ----
-  // Drawn as CSS masks filled with the text colour so they follow white/gold/ink
-  // like real text; plain <img> (white) where masks are unsupported.
+  // Plain <img> in a pre-rendered colour (white, or 'gold'/'ink' variants): the
+  // VIDAA TV browser didn't show CSS-masked words. Dim labels use CSS opacity.
   var LABELS = window.LABELS || {};
-  var MASKS = !!(window.CSS && CSS.supports &&
-    (CSS.supports('-webkit-mask-image', 'url(a.png)') || CSS.supports('mask-image', 'url(a.png)')));
 
-  function W(key) {
+  function W(key, variant) {
     var l = LABELS[key];
     if (!l) return '';
-    var size = 'width:' + (l.h * l.r).toFixed(3) + 'em;height:' + l.h + 'em;vertical-align:-' + l.d + 'em;';
-    var src = 'labels/' + key + '.png';
-    if (!MASKS) return '<img class="w" alt="' + l.t + '" src="' + src + '" style="' + size + '">';
-    return '<span class="w" role="img" aria-label="' + l.t + '" style="' + size +
-      '-webkit-mask-image:url(' + src + ');mask-image:url(' + src + ')"></span>';
+    return '<img class="w" alt="' + l.t + '" src="labels/' + key + (variant ? '_' + variant : '') + '.png" style="' +
+      'width:' + (l.h * l.r).toFixed(3) + 'em;height:' + l.h + 'em;vertical-align:-' + l.d + 'em">';
   }
   function T(key) { return LABELS[key] ? LABELS[key].t : ''; }
 
@@ -170,7 +165,7 @@
   }
   function hijriHtml(todayKey) {
     var h = hijriParts(todayKey);
-    return h ? h[0] + ' ' + W('hm_' + h[1]) + ' ' + h[2] + ' ' + W('hijri_suffix') : '';
+    return h ? h[0] + ' ' + W('hm_' + h[1], 'gold') + ' ' + h[2] + ' ' + W('hijri_suffix', 'gold') : '';
   }
   function hijriText(todayKey) {
     var h = hijriParts(todayKey);
@@ -237,35 +232,28 @@
     var r = Math.round;
     var rain = c.precipitation >= 0.1 ? c.precipitation.toFixed(1) + ' مم' : d.precipitation_probability_max[0] + '%';
     var month = parts(todayKey)[1];
+    // Kept deliberately short for reading from the sofa: now, humidity, rain, 3 days.
     var html =
       '<div class="w-now">' +
         '<div class="w-icon">' + info[1] + '</div>' +
         '<div><div class="w-temp">' + r(c.temperature_2m) + '°</div><div class="w-desc">' + W(info[0]) + '</div></div>' +
         '<div class="w-side">' +
-          '<div class="w-city">' + W('city') + '</div>' +
           (month >= 6 && month <= 9 ? '<div class="khareef">' + W('w_khareef') + '</div>' : '') +
-          '<div class="muted">' + W('w_max') + ' ' + r(d.temperature_2m_max[0]) + '° · ' +
-            W('w_min') + ' ' + r(d.temperature_2m_min[0]) + '°</div>' +
+          '<div class="w-range">' + r(d.temperature_2m_max[0]) + '° / ' + r(d.temperature_2m_min[0]) + '°</div>' +
         '</div>' +
       '</div>' +
       '<div class="stats">' +
-        stat('💧 ' + W('w_hum'), c.relative_humidity_2m + '%') +
-        stat('🌧️ ' + W('w_rain'), rain) +
-        stat('🌡️ ' + W('w_feel'), r(c.apparent_temperature) + '°') +
-        stat('💨 ' + W('w_wind'), r(c.wind_speed_10m) + ' كم/س') +
+        stat(W('w_hum'), c.relative_humidity_2m + '%') +
+        stat(W('w_rain'), rain) +
       '</div>' +
-      '<div class="rule"></div>' +
-      '<div class="w-fc">' + W('w_forecast') + '</div>' +
       '<div class="days">';
     for (var i = 1; i < Math.min(4, d.time.length); i++) {
       var di = weatherInfo(d.weather_code[i], false);
       html += '<div class="day">' +
         '<div class="n">' + W('wd_' + weekday(d.time[i])) + '</div>' +
-        '<div class="t"><span class="i">' + di[1] + '</span> ' +
-          r(d.temperature_2m_max[i]) + '° / ' + r(d.temperature_2m_min[i]) + '°</div>' +
-        '<div class="s">' + W(di[0]) + '</div>' +
-        '<div class="x">💧 ' + d.relative_humidity_2m_mean[i] + '%  🌧️ ' + d.precipitation_probability_max[i] + '%</div>' +
-        (d.precipitation_sum[i] >= 0.1 ? '<div class="r">' + d.precipitation_sum[i].toFixed(1) + ' مم</div>' : '') +
+        '<div class="i">' + di[1] + '</div>' +
+        '<div class="t">' + r(d.temperature_2m_max[i]) + '° / ' + r(d.temperature_2m_min[i]) + '°</div>' +
+        '<div class="x">' + W('w_rain') + ' ' + d.precipitation_probability_max[i] + '%</div>' +
       '</div>';
     }
     setHtml($('weather'), html + '</div>');
@@ -384,20 +372,21 @@
     var html = PRAYERS.map(function (p) {
       var at = momentOf(rowKey, d.times[p.key]);
       var cls = next && next.p === p && next.key === rowKey ? 'next' : at <= now ? 'past' : !p.prayer ? 'minor' : '';
-      return '<div class="pc ' + cls + '"><div class="n">' + W(label(p, rowKey)) + '</div><div class="t">' + time12(d.times[p.key]) + '</div></div>';
+      return '<div class="pc ' + cls + '"><div class="n">' + W(label(p, rowKey), cls === 'next' ? 'ink' : '') +
+        '</div><div class="t">' + time12(d.times[p.key]) + '</div></div>';
     }).join('');
     if (html !== renderedRow) { $('prayers').innerHTML = html; renderedRow = html; }
   }
 
   // "حان وقت صلاة العصر منذ 5 دقائق", with Arabic number agreement for minutes.
   function sinceHtml(prayerLabel, minutes) {
-    var tail;
-    if (minutes === 0) tail = W('now');
-    else if (minutes === 1) tail = W('since') + ' ' + W('min_1');
-    else if (minutes === 2) tail = W('since') + ' ' + W('min_2');
-    else if (minutes <= 10) tail = W('since') + ' ' + minutes + ' ' + W('min_few');
-    else tail = W('since') + ' ' + minutes + ' ' + W('min_1');
-    return W('now_prefix') + ' ' + W(prayerLabel) + ' ' + tail;
+    var g = 'gold', tail;
+    if (minutes === 0) tail = W('now', g);
+    else if (minutes === 1) tail = W('since', g) + ' ' + W('min_1', g);
+    else if (minutes === 2) tail = W('since', g) + ' ' + W('min_2', g);
+    else if (minutes <= 10) tail = W('since', g) + ' ' + minutes + ' ' + W('min_few', g);
+    else tail = W('since', g) + ' ' + minutes + ' ' + W('min_1', g);
+    return W('now_prefix', g) + ' ' + W(prayerLabel, g) + ' ' + tail;
   }
 
   function tick() {
@@ -406,7 +395,6 @@
 
     var h = w.getUTCHours();
     $('hm').textContent = (h % 12 || 12) + ':' + pad(w.getUTCMinutes());
-    $('sec').textContent = pad(w.getUTCSeconds());
     setHtml($('ampm'), W(h < 12 ? 'am' : 'pm'));
     setHtml($('greeting'), W(h < 12 ? 'g_morning' : 'g_evening'));
 

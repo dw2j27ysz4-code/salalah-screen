@@ -32,7 +32,10 @@
       return face.load().then(function () { return name; });
     }
 
-    function draw(text, fontName, size) {
+    // Plain coloured images (no CSS masks): the VIDAA TV engine didn't show masked words.
+    var COLORS = { white: '#ffffff', gold: '#f6cf6a', ink: '#1a1330' };
+
+    function draw(text, fontName, size, color) {
       var c = document.createElement('canvas'), ctx = c.getContext('2d');
       var font = size + 'px "' + fontName + '"';
       ctx.font = font; ctx.direction = 'rtl'; ctx.textAlign = 'center';
@@ -43,7 +46,7 @@
       var w = Math.ceil(m.actualBoundingBoxLeft + m.actualBoundingBoxRight) + 2 * pad;
       c.width = w; c.height = asc + desc;
       ctx.font = font; ctx.direction = 'rtl'; ctx.textAlign = 'center'; ctx.textBaseline = 'alphabetic';
-      ctx.fillStyle = '#fff';
+      ctx.fillStyle = color || COLORS.white;
       ctx.fillText(text, pad + m.actualBoundingBoxLeft, asc);
       return { canvas: c, meta: { h: +(c.height / size).toFixed(4), d: +(desc / size).toFixed(4), r: +(w / c.height).toFixed(4) } };
     }
@@ -78,11 +81,18 @@
         .then(function () {
           var keys = Object.keys(LABEL_CATALOG), chain = Promise.resolve();
           keys.forEach(function (key) {
-            chain = chain.then(function () {
-              var entry = LABEL_CATALOG[key];
-              var out = draw(entry[0], names[styles[entry[1]]], SIZE);
-              out.meta.t = entry[0].replace(/ـ/g, '');
-              return post('/save', { key: key, png: out.canvas.toDataURL('image/png'), meta: out.meta });
+            var entry = LABEL_CATALOG[key];
+            ['white'].concat(entry[2] || []).forEach(function (variant) {
+              chain = chain.then(function () {
+                var out = draw(entry[0], names[styles[entry[1]]], SIZE, COLORS[variant]);
+                out.meta.t = entry[0].replace(/ـ/g, '');
+                // Variants share the white image's metrics, so only the white one goes in the manifest.
+                return post('/save', {
+                  key: variant === 'white' ? key : key + '_' + variant,
+                  png: out.canvas.toDataURL('image/png'),
+                  meta: variant === 'white' ? out.meta : null,
+                });
+              });
             });
           });
           return chain.then(function () { return post('/done'); });
