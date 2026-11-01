@@ -71,7 +71,42 @@
 
       function opposite(a, b) { return DIRS[a][0] === -DIRS[b][0] && DIRS[a][1] === -DIRS[b][1]; }
 
+      // Computer rider: score every legal direction by the open area it leads into (bounded
+      // flood fill), the straight run ahead and a small preference for going straight;
+      // avoids cells next to the opponent's head. Occasionally hesitates, like a person.
+      var seen = new Uint8Array(COLS * ROWS), bfs = new Int32Array(COLS * ROWS);
+      function blocked(x, y) { return x < 0 || y < 0 || x >= COLS || y >= ROWS || grid[y * COLS + x] !== 0; }
+      function space(x, y, limit) {
+        seen.fill(0);
+        var head = 0, tail = 0, count = 0;
+        bfs[tail++] = y * COLS + x; seen[y * COLS + x] = 1;
+        while (head < tail && count < limit) {
+          var c = bfs[head++], cxx = c % COLS, cyy = (c / COLS) | 0; count++;
+          [[1, 0], [-1, 0], [0, 1], [0, -1]].forEach(function (d) {
+            var nx = cxx + d[0], ny = cyy + d[1], k = ny * COLS + nx;
+            if (!blocked(nx, ny) && !seen[k]) { seen[k] = 1; bfs[tail++] = k; }
+          });
+        }
+        return count;
+      }
+      function cpuChoose(i) {
+        if (Math.random() < 0.04) return;
+        var r = riders[i], o = riders[1 - i], best = null, bestScore = -Infinity;
+        Object.keys(DIRS).forEach(function (d) {
+          if (opposite(d, r.dir)) return;
+          var nx = r.x + DIRS[d][0], ny = r.y + DIRS[d][1];
+          if (blocked(nx, ny)) return;
+          var run = 0, x = nx, y = ny;
+          while (run < 12 && !blocked(x + DIRS[d][0], y + DIRS[d][1])) { x += DIRS[d][0]; y += DIRS[d][1]; run++; }
+          var near = Math.abs(o.x - nx) + Math.abs(o.y - ny) < 3 ? 60 : 0;
+          var s = space(nx, ny, 400) * 4 + run + (d === r.dir ? 3 : 0) - near + Math.random() * 2;
+          if (s > bestScore) { bestScore = s; best = d; }
+        });
+        if (best && best !== r.dir) r.queue = [best];
+      }
+
       function tick() {
+        riders.forEach(function (r, i) { if (lobby.isCpu(i)) cpuChoose(i); });
         riders.forEach(function (r) {
           while (r.queue.length) {
             var d = r.queue.shift();
@@ -119,7 +154,7 @@
             phase = 'over';
             banner('فاز ' + (w === 0 ? 'الأزرق' : 'الذهبي') + ' ' + score[w] + ' – ' + score[1 - w] +
               '<small>اضغط «مباراة جديدة» على الجوال</small>', COLORS[w], 0);
-            lobby.broadcast({ t: 'state', phase: 'over', winner: w, score: score });
+            lobby.broadcast({ t: 'state', phase: 'over', winner: w, score: score, solo: lobby.solo() });
             return;
           }
           banner('جولة ' + (w === 0 ? 'للأزرق' : 'للذهبي'), COLORS[w], 1500);
@@ -170,6 +205,9 @@
       var heads = [0, 1].map(function (i) { return fx.sprite(headTex, 'glow', { add: true, tint: COLORS[i] }); });
       var cores = [0, 1].map(function () { var s = fx.sprite(fx.tex.dot, 'top', { add: true }); s.scale.set(26 / 64); return s; });
       var countText = fx.text('', W / 2, H * 0.4, 0xffffff, 170);
+      fx.ambient(40, [0xffffff, COLORS[0], COLORS[1]]);
+      var tags = [0, 1].map(function () { return fx.tag(''); });
+      var lastPulse = 0;
 
       function render() {
         var t = performance.now();
@@ -183,7 +221,14 @@
           h.position.set(x, y); cores[i].position.set(x, y);
           h.alpha = r.alive ? 0.9 + 0.1 * Math.sin(t / 90) : 0.25; cores[i].alpha = r.alive ? 1 : 0.2;
           h.scale.set((r.alive ? 1 + 0.08 * Math.sin(t / 120) : 0.7) / fx.px);
+          tags[i].text = lobby.solo() && phase !== 'lobby' ? (lobby.isCpu(i) ? 'الكمبيوتر' : 'أنت') : '';
+          tags[i].follow(x, y - 44);
         });
+        // A soft pulse of light rolls out from each head every second and a half.
+        if (riders && phase === 'play' && t - lastPulse > 1500) {
+          lastPulse = t;
+          riders.forEach(function (r, i) { if (r.alive) fx.ring(cx(r.x), cy(r.y), COLORS[i], 260, 0.9); });
+        }
         if (phase === 'countdown') {
           var left = (phaseEnd - Date.now()) / 1000, n = Math.max(1, Math.ceil(left)), f = left - Math.floor(left);
           countText.text = String(n); countText.alpha = 0.3 + 0.7 * f; countText.scale.set((0.8 + 0.5 * f) / fx.px);

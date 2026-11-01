@@ -84,4 +84,11 @@ window.LABEL_CATALOG = {
   wx_storm_h: ['عاصفـة رعديـة مع بـرد', 'label'],
 
   news: ['أخبـــار', 'name'],
+  // Games menu
+  games_title: ['ألعـــاب', 'hero'],
+  games_sub: ['لاعـب واحـد أو لاعبـان', 'label'],
+  game_hockey: ['هوكـي الطاولـة', 'name'],
+  game_trail: ['مبـارزة الأثـر', 'name'],
+  game_race: ['سبـاق السيـارات', 'name'],
+  game_tank: ['معركـة الدبابـات', 'name'],
 };

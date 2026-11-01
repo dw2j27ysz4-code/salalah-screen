@@ -47,6 +47,9 @@
     #fire { position: absolute; right: 18px; top: 50%; width: 36%; aspect-ratio: 1; transform: translateY(-50%); border-radius: 50%;
       border: 0; font-size: 26px; font-weight: 800; font-family: inherit; color: #1a1330; }
     #fire.on { filter: brightness(1.3); transform: translateY(-50%) scale(.94); }
+    #solo { position: fixed; left: 50%; bottom: max(24px, env(safe-area-inset-bottom)); transform: translateX(-50%); display: none; z-index: 3;
+      font-weight: 700; font-size: 19px; font-family: inherit; color: #fff; background: linear-gradient(180deg, rgba(255,255,255,.28), rgba(255,255,255,.1));
+      border: 1px solid rgba(255,255,255,.45); border-radius: 999px; padding: 14px 30px; white-space: nowrap; }
     #again { position: fixed; left: 50%; bottom: max(24px, env(safe-area-inset-bottom)); transform: translateX(-50%); display: none;
       font-weight: 700; font-size: 20px; font-family: inherit; color: #1a1330; background: #f6cf6a; border: 0; border-radius: 999px; padding: 14px 34px; }
   </style>
@@ -65,6 +68,7 @@
   <div id="race"><div id="rl">◀</div><div id="rr">▶</div></div>
   <button id="tilt">التوجيه بإمالة الجوال</button>
   <div id="tank"><div id="stickZone"></div><div id="stickBase"></div><div id="stickKnob"></div><button id="fire">إطلاق</button></div>
+  <button id="solo">العب ضد الكمبيوتر 🤖</button>
   <button id="again">مباراة جديدة</button>
   <script>
     // Phone controller for the TV games: hockey (finger position in your half of the table),
@@ -84,16 +88,17 @@
       var link = GameLink.join(room, function (m) {
         if (m.t === 'slot') {
           if (slot !== m.slot) { slot = m.slot; color = m.color; setup(m); }
+          $('solo').style.display = m.phase === 'lobby' ? 'block' : 'none';
         } else if (m.t === 'full') {
           $('msg').textContent = 'اللعبة ممتلئة: يوجد لاعبان بالفعل';
         } else if (m.t === 'buzz') {
           if (navigator.vibrate) navigator.vibrate(m.ms || 20);
         } else if (m.t === 'state') {
           if (m.phase === 'over') {
-            $('msg').textContent = m.winner === slot ? 'فزت! 🎉' : 'خسرت هذه المرة';
+            $('msg').textContent = m.winner === slot ? 'فزت! 🎉' : (m.solo ? 'فاز الكمبيوتر هذه المرة' : 'خسرت هذه المرة');
             $('again').style.display = 'block';
           } else {
-            $('again').style.display = 'none';
+            $('again').style.display = 'none'; $('solo').style.display = 'none';
             $('msg').textContent = HINTS[game] || '';
           }
         }
@@ -257,6 +262,7 @@
         fireBtn.addEventListener('touchend', function () { fireBtn.className = ''; }); fireBtn.addEventListener('mouseup', function () { fireBtn.className = ''; });
       }
 
+      $('solo').addEventListener('click', function () { link.send({ t: 'solo' }); $('solo').style.display = 'none'; $('msg').textContent = 'جارٍ البدء ضد الكمبيوتر…'; });
       $('again').addEventListener('click', function () { link.send({ t: 'again' }); $('again').style.display = 'none'; });
     })();
   </script>

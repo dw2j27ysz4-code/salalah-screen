@@ -94,12 +94,26 @@
         return [best, Math.sqrt(bd)];
       }
 
+      // Computer driver: aim at a point further along the centreline (further when faster),
+      // brake when the road well ahead turns sharply. Capped a little below full speed.
+      var CPU_TOP = 0.9;
+      function cpuDrive(c) {
+        var look = Math.round(8 + c.v / 28);
+        var t = PATH[(c.idx + look) % N], want = Math.atan2(t[1] - c.y, t[0] - c.x);
+        var diff = Math.atan2(Math.sin(want - c.a), Math.cos(want - c.a));
+        c.steer = Math.max(-1, Math.min(1, diff * 2.4));
+        var f = PATH[(c.idx + look * 2 + 18) % N], fa = Math.atan2(f[1] - c.y, f[0] - c.x);
+        var fd = Math.abs(Math.atan2(Math.sin(fa - c.a), Math.cos(fa - c.a)));
+        c.brake = fd > 0.85 && c.v > 360;
+      }
+
       function step(dt) {
         cars.forEach(function (c, i) {
+          if (lobby.isCpu(i) && !c.done) cpuDrive(c);
           if (c.done) { c.v *= 0.96; }
           var near = nearest(c), onTrack = near[1] < TRACK_W / 2;
           c.onTrack = onTrack;
-          var top = onTrack ? MAX_SPEED : OFF_SPEED;
+          var top = (onTrack ? MAX_SPEED : OFF_SPEED) * (lobby.isCpu(i) ? CPU_TOP : 1);
           if (!c.done) {
             if (c.brake) c.v -= BRAKE * dt; else c.v += ACCEL * dt;
           }
@@ -140,7 +154,7 @@
           if (finished.length === 1) {
             banner((i === 0 ? 'الأزرق' : 'الذهبي') + ' يفوز!', COLORS[i], 0);
             phase = 'over';
-            lobby.broadcast({ t: 'state', phase: 'over', winner: i });
+            lobby.broadcast({ t: 'state', phase: 'over', winner: i, solo: lobby.solo() });
             var a = PATH[0];
             fx.emit({ x: a[0], y: a[1], count: 90, color: [COLORS[i], 0xffffff, 0xd64034], tex: 'square', add: false,
               speed: [200, 900], life: [1, 2], size: 14, gravity: 500, drag: 1.2, spin: 14 });
@@ -243,6 +257,17 @@
       lights.visible = false;
       var goUntil = 0;
 
+      // Cloud shadows drifting slowly across the circuit, over everything.
+      var clouds = [0, 1, 2, 3].map(function (i) {
+        var s = new PIXI.Sprite(fx.tex.smoke); s.anchor.set(0.5); s.tint = 0x000000; s.alpha = 0.22;
+        s.scale.set((420 + i * 90) / 96, (300 + i * 60) / 96);
+        s.position.set(Math.random() * W, Math.random() * H); s.vx = 14 + i * 5; s.vy = 4 + i;
+        fx.layers.top.addChildAt(s, 0); return s;
+      });
+      fx.ambient(24, [0xffffff, 0xfff1c0]);
+      // Position badges (1st / 2nd) and solo name tags above the cars.
+      var badges = [0, 1].map(function (i) { return fx.tag('', COLORS[i]); });
+
       function render(dt) {
         cars && cars.forEach(function (c, i) {
           var s = carSprites[i];
@@ -267,6 +292,19 @@
           }
         });
         if (!cars) { carSprites.concat(shadows, beams, brakes).forEach(function (s) { s.visible = false; }); }
+        clouds.forEach(function (s) {
+          s.x += s.vx * dt; s.y += s.vy * dt;
+          if (s.x > W + 300) { s.x = -300; s.y = Math.random() * H; }
+          if (s.y > H + 200) s.y = -200;
+        });
+        badges.forEach(function (b, i) {
+          if (!cars || phase === 'lobby') { b.text = ''; return; }
+          var me = cars[i], other = cars[1 - i];
+          var ahead = me.lap * N + ((me.idx - 6 + N) % N) >= other.lap * N + ((other.idx - 6 + N) % N);
+          var who = lobby.solo() ? (lobby.isCpu(i) ? 'الكمبيوتر' : 'أنت') + ' · ' : '';
+          b.text = who + (ahead ? 'الأول' : 'الثاني');
+          b.follow(me.x, me.y - 46);
+        });
         var now = Date.now();
         if (phase === 'countdown') {
           lights.visible = true;

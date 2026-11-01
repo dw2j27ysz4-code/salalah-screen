@@ -71,10 +71,29 @@
       function stepPaddle(p, slot, dt) {
         var minX = slot === 0 ? PR : W / 2 + PR, maxX = slot === 0 ? W / 2 - PR : W - PR;
         var tx = Math.max(minX, Math.min(maxX, p.tx)), ty = Math.max(PR, Math.min(H - PR, p.ty));
-        var dx = tx - p.x, dy = ty - p.y, d = Math.sqrt(dx * dx + dy * dy), maxStep = MAX_PADDLE * dt;
+        var maxSpeed = lobby.isCpu(slot) ? MAX_PADDLE * CPU_SPEED : MAX_PADDLE;
+        var dx = tx - p.x, dy = ty - p.y, d = Math.sqrt(dx * dx + dy * dy), maxStep = maxSpeed * dt;
         var k = d > maxStep ? maxStep / d : 1;
         p.vx = dx * k / dt; p.vy = dy * k / dt;
         p.x += dx * k; p.y += dy * k;
+      }
+
+      // Computer player: when the puck is in its half, get behind it (on its own goal side)
+      // and drive through it toward the other goal; otherwise guard the goal, tracking the
+      // puck's height. The target is eased so it reacts like a person, not instantly.
+      var CPU_SPEED = 0.5, CPU_EASE = 0.12;
+      function cpuThink(slot) {
+        var p = paddles[slot], home = slot === 0 ? 0 : W, toward = slot === 0 ? 1 : -1, tx, ty;
+        var inHalf = slot === 0 ? puck.x < W / 2 : puck.x > W / 2;
+        if (phase === 'play' && inHalf && Math.abs(puck.x - home) > PR * 0.8) {
+          var behind = (puck.x - p.x) * toward > 10;
+          if (behind) { tx = puck.x + toward * 90; ty = puck.y + (H / 2 - puck.y) * 0.3; }
+          else { tx = puck.x - toward * (PR + KR + 40); ty = puck.y + (p.y < puck.y ? -80 : 80); }
+        } else {
+          tx = home + toward * 170;
+          ty = H / 2 + (puck.y - H / 2) * 0.6;
+        }
+        p.tx += (tx - p.tx) * CPU_EASE; p.ty += (ty - p.ty) * CPU_EASE;
       }
 
       function collide(p, slot) {
@@ -132,7 +151,7 @@
           phase = 'over';
           banner('فاز ' + (scorer === 0 ? 'الأزرق' : 'الذهبي') + ' ' + score[scorer] + ' – ' + score[1 - scorer] +
             '<small>اضغط «مباراة جديدة» على الجوال</small>', COLORS[scorer], 0);
-          lobby.broadcast({ t: 'state', phase: 'over', winner: scorer, score: score });
+          lobby.broadcast({ t: 'state', phase: 'over', winner: scorer, score: score, solo: lobby.solo() });
           return;
         }
         banner('هدف!', COLORS[scorer], 1200);
@@ -232,6 +251,17 @@
       var puckSprite = fx.sprite(discTex(KR, '#ffffff', false), 'obj');
       var countText = fx.text('', W / 2, H / 2 - 190, 0xffffff, 170);
 
+      // Chasing LED strip around the rim: dots whose brightness travels around the table.
+      var leds = [], LED_N = 64;
+      for (var li = 0; li < LED_N; li++) {
+        var t = li / LED_N, per = 2 * (W + H), d = t * per, x, y;
+        if (d < W) { x = d; y = 6; } else if (d < W + H) { x = W - 6; y = d - W; } else if (d < 2 * W + H) { x = W - (d - W - H); y = H - 6; } else { x = 6; y = H - (d - 2 * W - H); }
+        var led = fx.sprite(fx.tex.dot, 'glow', { add: true, tint: x < W / 2 ? COLORS[0] : COLORS[1] });
+        led.scale.set(26 / 64); led.position.set(x, y); led.t = t; leds.push(led);
+      }
+      fx.ambient(36, [0xffffff, COLORS[0], COLORS[1]]);
+      var tags = [0, 1].map(function () { return fx.tag(''); });
+
       function render(dt) {
         var show = !!paddles;
         paddleSprites.forEach(function (s, i) { s.visible = show; if (show) s.position.set(paddles[i].x, paddles[i].y); });
@@ -251,6 +281,13 @@
             streak.alpha = Math.min(0.9, sp / 3000);
           }
         }
+        var tnow = performance.now() / 1000;
+        leds.forEach(function (l) { l.alpha = 0.15 + 0.85 * Math.pow(Math.max(0, Math.sin((l.t - tnow * 0.12) * Math.PI * 6)), 6); });
+        // In a solo game, label who is who above the paddles.
+        tags.forEach(function (tg, i) {
+          tg.text = paddles && lobby.solo() && phase !== 'lobby' ? (lobby.isCpu(i) ? 'الكمبيوتر' : 'أنت') : '';
+          if (paddles) tg.follow(paddles[i].x, paddles[i].y - PR - 26);
+        });
         goals.forEach(function (s, i) {
           goalGlow[i] = Math.max(0, goalGlow[i] - dt * 0.8);
           s.alpha = 0.55 + 0.25 * Math.sin(performance.now() / 400 + i) + goalGlow[i] * 0.8;
@@ -266,6 +303,7 @@
       var acc = 0, STEP = 1 / 240;
       fx.app.ticker.add(function () {
         var dt = Math.min(0.1, fx.app.ticker.deltaMS / 1000);
+        if (paddles && puck) [0, 1].forEach(function (s) { if (lobby.isCpu(s)) cpuThink(s); });
         if (hitStop > 0) { hitStop -= dt; } else {
           acc += dt;
           while (acc >= STEP) {

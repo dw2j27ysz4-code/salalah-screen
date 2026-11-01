@@ -30,6 +30,9 @@ body {
 .tv .hud-title { font-size: 3.4vh; font-weight: 700; }
 .tv .score { font-size: 7vh; font-weight: 800; display: flex; align-items: center; gap: 1.5vh; min-width: 12vw; }
 .tv .score .dotc { width: 3vh; height: 3vh; }
+.tv .score b { display: inline-block; text-shadow: 0 0 2vh rgba(255,255,255,.25); }
+.tv .score b.pop { animation: pop .6s cubic-bezier(.2,1.6,.4,1); }
+@keyframes pop { 0% { transform: scale(1); } 30% { transform: scale(1.6); color: #fff; text-shadow: 0 0 4vh #fff; } 100% { transform: scale(1); } }
 .tv #s0 { justify-content: flex-start; } .tv #s1 { justify-content: flex-end; }
 .tv #stage { position: fixed; top: 12vh; left: 3vw; right: 3vw; bottom: 3vh; display: flex; align-items: center; justify-content: center; }
 .tv #stage canvas { position: absolute; }
@@ -50,6 +53,8 @@ body {
 .tv .slot.in { border-color: var(--c); box-shadow: 0 0 2.5vh var(--c); }
 .tv .slot.in b { color: var(--c); }
 .tv .slot .dotc { margin-left: 0.8vh; }
+.tv .solo-hint { font-size: 2.3vh; color: #f6cf6a; margin: -0.6vh 0 1.2vh; }
+.tv .solo-hint b { background: rgba(246,207,106,.2); border: 1px solid rgba(246,207,106,.6); border-radius: .8vh; padding: 0 .8vh; }
 
 .tv #banner {
   position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%) scale(0.6); opacity: 0;

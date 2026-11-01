@@ -92,7 +92,64 @@
         return [dx / d, dy / d];
       }
 
+      // ---- Computer tank ----
+      // Segment vs blocks (slab test): true when nothing stands between the two points.
+      function clearLine(x0, y0, x1, y1) {
+        return BLOCKS.every(function (b) {
+          var m = SHELL_R, tmin = 0, tmax = 1, dx = x1 - x0, dy = y1 - y0;
+          var axes = [[dx, x0, b[0] - m, b[0] + b[2] + m], [dy, y0, b[1] - m, b[1] + b[3] + m]];
+          for (var k = 0; k < 2; k++) {
+            var d = axes[k][0], o = axes[k][1], lo = axes[k][2], hi = axes[k][3];
+            if (Math.abs(d) < 1e-6) { if (o < lo || o > hi) return true; continue; }
+            var t1 = (lo - o) / d, t2 = (hi - o) / d;
+            if (t1 > t2) { var tt = t1; t1 = t2; t2 = tt; }
+            tmin = Math.max(tmin, t1); tmax = Math.min(tmax, t2);
+            if (tmin > tmax) return true;
+          }
+          return false;
+        });
+      }
+      function freeSpot(x, y) {
+        if (x < TR || y < TR || x > W - TR || y > H - TR) return false;
+        return BLOCKS.every(function (b) { return x < b[0] - TR || x > b[0] + b[2] + TR || y < b[1] - TR || y > b[1] + b[3] + TR; });
+      }
+      // With a clear shot: face the target (creeping, closing in when far) and fire at a
+      // human pace. Without one: every half second pick, of 16 headings, the open spot that
+      // gets closer and ideally has a clear shot. Always: sidestep shells coming its way.
+      function cpuTank(i) {
+        var t = tanks[i], o = tanks[(i + 1) % 2], now = Date.now();
+        var dx = o.x - t.x, dy = o.y - t.y, dist = Math.sqrt(dx * dx + dy * dy), ang = Math.atan2(dy, dx);
+        if (clearLine(t.x, t.y, o.x, o.y)) {
+          var mag = dist > 520 ? 0.6 : 0.2;
+          t.sx = Math.cos(ang) * mag; t.sy = Math.sin(ang) * mag;
+          var aim = Math.abs(Math.atan2(Math.sin(ang - t.a), Math.cos(ang - t.a)));
+          if (aim < 0.12 && now > (t.cpuShot || 0)) { fire(i); t.cpuShot = now + 650 + Math.random() * 650; }
+        } else {
+          if (!t.cpuDir || now > t.cpuUntil) {
+            var best = null, bestScore = -Infinity;
+            for (var k = 0; k < 16; k++) {
+              var a = k * Math.PI / 8, px = t.x + Math.cos(a) * 130, py = t.y + Math.sin(a) * 130;
+              if (!freeSpot(px, py)) continue;
+              var s = -Math.sqrt((o.x - px) * (o.x - px) + (o.y - py) * (o.y - py)) + (clearLine(px, py, o.x, o.y) ? 400 : 0) + Math.random() * 40;
+              if (s > bestScore) { bestScore = s; best = a; }
+            }
+            t.cpuDir = best === null ? Math.random() * Math.PI * 2 : best; t.cpuUntil = now + 500;
+          }
+          t.sx = Math.cos(t.cpuDir); t.sy = Math.sin(t.cpuDir);
+        }
+        shells.forEach(function (s) {
+          if (s.owner === i && s.bounces === 0) return;
+          var rx = t.x - s.x, ry = t.y - s.y, along = (rx * s.vx + ry * s.vy) / SHELL_V;
+          var px = -s.vy / SHELL_V, py = s.vx / SHELL_V, side = rx * px + ry * py;
+          if (along > 0 && along < 280 && Math.abs(side) < TR * 2) {
+            var dir = side >= 0 ? 1 : -1;
+            if (freeSpot(t.x + px * dir * 60, t.y + py * dir * 60)) { t.sx = px * dir; t.sy = py * dir; }
+          }
+        });
+      }
+
       function step(dt) {
+        [0, 1].forEach(function (i) { if (lobby.isCpu(i) && phase === 'play') cpuTank(i); });
         tanks.forEach(function (t) {
           var mag = Math.min(1, Math.sqrt(t.sx * t.sx + t.sy * t.sy));
           t.moving = 0;
@@ -157,7 +214,7 @@
           phase = 'over';
           banner('فاز ' + (scorer === 0 ? 'الأزرق' : 'الذهبي') + ' ' + score[scorer] + ' – ' + score[1 - scorer] +
             '<small>اضغط «مباراة جديدة» على الجوال</small>', COLORS[scorer], 0);
-          lobby.broadcast({ t: 'state', phase: 'over', winner: scorer, score: score });
+          lobby.broadcast({ t: 'state', phase: 'over', winner: scorer, score: score, solo: lobby.solo() });
           return;
         }
         banner('إصابة!', COLORS[scorer], 900);
@@ -274,9 +331,24 @@
         return s;
       }
       var countText = fx.text('', W / 2, H * 0.22, 0xffffff, 170);
+      // Rotating amber warning beacons in the corners, dust in the air, and solo name tags.
+      var beacons = [[30, 30], [W - 30, 30], [30, H - 30], [W - 30, H - 30]].map(function (p, k) {
+        var b = fx.sprite(fx.tex.spark, 'glow', { add: true, tint: 0xffa21f }); b.anchor.set(0, 0.5);
+        b.scale.set(140 / 64, 50 / 12); b.position.set(p[0], p[1]); b.spin = k % 2 ? 2.4 : -2.4;
+        var core = fx.sprite(fx.tex.dot, 'glow', { add: true, tint: 0xffc04a }); core.scale.set(30 / 64); core.position.set(p[0], p[1]);
+        return b;
+      });
+      fx.ambient(30, [0xffe6b0, 0xffffff]);
+      var tags = [0, 1].map(function () { return fx.tag(''); });
 
       function render() {
         var now = Date.now();
+        beacons.forEach(function (b) { b.rotation += b.spin / 60; });
+        tags.forEach(function (tg, i) {
+          var t = tanks && tanks[i];
+          tg.text = t && lobby.solo() && phase !== 'lobby' ? (lobby.isCpu(i) ? 'الكمبيوتر' : 'أنت') : '';
+          if (t) tg.follow(t.x, t.y - TR - 26);
+        });
         parts.forEach(function (p, i) {
           var t = tanks && tanks[i], vis = !!t && phase !== 'lobby';
           p.shadow.visible = p.hull.visible = p.turret.visible = vis; p.shield.visible = vis && now < (t ? t.safeUntil : 0);

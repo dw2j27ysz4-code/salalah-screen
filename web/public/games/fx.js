@@ -76,7 +76,7 @@
     stamp.scale.set(px * 0.5);
 
     var tex = baseTextures();
-    var pool = [], live = [];
+    var pool = [], live = [], motes = [];
     var shakeAmt = 0, shakeEnd = 0, flashG = new PIXI.Graphics(), flashA = 0;
     flashG.beginFill(0xffffff).drawRect(0, 0, app.view.width, app.view.height).endFill(); flashG.alpha = 0; ui.addChild(flashG);
 
@@ -149,7 +149,31 @@
         L.top.addChild(t);
         return t;
       },
+      // Slow floating light motes over the whole scene (ambient depth; ~40 sprites).
+      ambient: function (n, colors) {
+        for (var i = 0; i < n; i++) {
+          var m = new PIXI.Sprite(tex.dot); m.anchor.set(0.5); m.blendMode = PIXI.BLEND_MODES.ADD;
+          m.tint = color(colors[i % colors.length]); m.x = Math.random() * W; m.y = Math.random() * H;
+          m.vx = (Math.random() - 0.5) * 14; m.vy = -6 - Math.random() * 12; m.phase = Math.random() * 6.3;
+          m.scale.set((6 + Math.random() * 12) / 64);
+          L.fx.addChild(m); motes.push(m);
+        }
+      },
+      // A small floating name tag that follows a point (call .follow(x, y) every frame).
+      tag: function (str, c) {
+        var t = fx.text(str, 0, 0, c || 0xffffff, 26);
+        t.alpha = 0.9;
+        t.follow = function (x, y) { t.position.set(x, y); };
+        return t;
+      },
       update: function (dt) {
+        var now = performance.now() / 1000;
+        motes.forEach(function (m) {
+          m.x += m.vx * dt; m.y += m.vy * dt;
+          if (m.y < -20) { m.y = H + 20; m.x = Math.random() * W; }
+          if (m.x < -20) m.x = W + 20; if (m.x > W + 20) m.x = -20;
+          m.alpha = 0.25 + 0.25 * Math.sin(now * 1.3 + m.phase);
+        });
         for (var i = live.length - 1; i >= 0; i--) {
           var p = live[i];
           p.life -= dt;
