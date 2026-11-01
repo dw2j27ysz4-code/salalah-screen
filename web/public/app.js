@@ -1,0 +1,466 @@
+// Salalah info screen for the VIDAA TV browser. Plain ES2017 (no modules, no
+// optional chaining) because TV web engines lag behind desktop browsers.
+(function () {
+  'use strict';
+
+  // Same calibration as the Android app (Config.kt): matches the Ministry of Awqaf
+  // Salalah tables with Fajr/Isha at 18° plus the ministry's precaution minutes.
+  var CFG = {
+    lat: 17.0151,
+    lon: 54.0924,
+    tz: 'Asia/Muscat',
+    methodSettings: '18,null,18',
+    tune: '0,0,0,5,6,5,0,0,0', // Imsak,Fajr,Sunrise,Dhuhr,Asr,Maghrib,Sunset,Isha,Midnight
+    prayerCacheVersion: 1,
+  };
+  var OMAN_OFFSET_MS = 4 * 3600 * 1000; // Oman has no daylight saving
+  var MINUTE = 60 * 1000;
+
+  var PRAYERS = [
+    { key: 'Fajr', name: 'الفجر', prayer: true },
+    { key: 'Sunrise', name: 'الشروق', prayer: false },
+    { key: 'Dhuhr', name: 'الظهر', prayer: true },
+    { key: 'Asr', name: 'العصر', prayer: true },
+    { key: 'Maghrib', name: 'المغرب', prayer: true },
+    { key: 'Isha', name: 'العشاء', prayer: true },
+  ];
+  var HIJRI_MONTHS = ['محرم', 'صفر', 'ربيع الأول', 'ربيع الآخر', 'جمادى الأولى', 'جمادى الآخرة',
+    'رجب', 'شعبان', 'رمضان', 'شوال', 'ذو القعدة', 'ذو الحجة'];
+  var GREG_MONTHS = ['يناير', 'فبراير', 'مارس', 'أبريل', 'مايو', 'يونيو',
+    'يوليو', 'أغسطس', 'سبتمبر', 'أكتوبر', 'نوفمبر', 'ديسمبر'];
+  var WEEKDAYS = ['الأحد', 'الاثنين', 'الثلاثاء', 'الأربعاء', 'الخميس', 'الجمعة', 'السبت'];
+
+  function $(id) { return document.getElementById(id); }
+  function pad(n) { return (n < 10 ? '0' : '') + n; }
+
+  // ---- Muscat wall-clock helpers: a "day key" is "YYYY-MM-DD" in Muscat time. ----
+  function wall(ms) { return new Date(ms + OMAN_OFFSET_MS); } // read with getUTC*()
+  function keyOf(w) { return w.getUTCFullYear() + '-' + pad(w.getUTCMonth() + 1) + '-' + pad(w.getUTCDate()); }
+  function parts(key) { var p = key.split('-'); return [+p[0], +p[1], +p[2]]; }
+  function addDays(key, n) { var p = parts(key); return keyOf(new Date(Date.UTC(p[0], p[1] - 1, p[2] + n))); }
+  function weekday(key) { var p = parts(key); return new Date(Date.UTC(p[0], p[1] - 1, p[2])).getUTCDay(); }
+  function momentOf(key, hhmm) {
+    var p = parts(key), t = hhmm.split(':');
+    return Date.UTC(p[0], p[1] - 1, p[2], +t[0], +t[1]) - OMAN_OFFSET_MS;
+  }
+  function time12(hhmm) {
+    var t = hhmm.split(':'), h = +t[0], h12 = h % 12 || 12;
+    return h12 + ':' + t[1] + ' ' + (h < 12 ? 'ص' : 'م');
+  }
+  function label(p, key) { return p.key === 'Dhuhr' && weekday(key) === 5 ? 'الجمعة' : p.name; }
+
+  var store = {
+    get: function (k) { try { var v = localStorage.getItem(k); return v ? JSON.parse(v) : null; } catch (e) { return null; } },
+    set: function (k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) { /* storage unavailable */ } },
+  };
+
+  function getJson(url) {
+    return fetch(url, { cache: 'no-store' }).then(function (r) {
+      if (!r.ok) throw new Error('HTTP ' + r.status + ' ' + url);
+      return r.json();
+    });
+  }
+
+  // ---- Prayer times (Aladhan, one month per request, cached for offline use) ----
+  var days = {}; // day key -> { times: {Fajr: 'HH:MM', ...}, hijri: [d, m, y] }
+  var loadedMonths = {};
+
+  function monthUrl(y, m) {
+    return 'https://api.aladhan.com/v1/calendar/' + y + '/' + m +
+      '?latitude=' + CFG.lat + '&longitude=' + CFG.lon + '&method=99&methodSettings=' + CFG.methodSettings +
+      '&tune=' + CFG.tune + '&school=0&timezonestring=' + CFG.tz;
+  }
+
+  function loadMonth(y, m) {
+    var id = y + '-' + m;
+    if (loadedMonths[id]) return Promise.resolve();
+    var cacheKey = 'prayers_v' + CFG.prayerCacheVersion + '_' + id;
+    var cached = store.get(cacheKey);
+    var source = cached ? Promise.resolve(cached) : getJson(monthUrl(y, m)).then(function (json) {
+      if (json.code !== 200) throw new Error('Aladhan: ' + JSON.stringify(json.data));
+      var list = json.data.map(function (d) {
+        var g = d.date.gregorian.date.split('-'); // DD-MM-YYYY
+        var times = {};
+        PRAYERS.forEach(function (p) { times[p.key] = d.timings[p.key].slice(0, 5); });
+        var h = d.date.hijri;
+        return { key: g[2] + '-' + g[1] + '-' + g[0], times: times, hijri: [+h.day, h.month.number, +h.year] };
+      });
+      store.set(cacheKey, list);
+      return list;
+    });
+    return source.then(function (list) {
+      list.forEach(function (d) { days[d.key] = d; });
+      loadedMonths[id] = true;
+    });
+  }
+
+  var prayersFailed = false;
+  var prayersFor = null;
+
+  function ensurePrayers(todayKey) {
+    if (prayersFor === todayKey) return;
+    prayersFor = todayKey;
+    var t = parts(todayKey), n = parts(addDays(todayKey, 1));
+    loadMonth(t[0], t[1]).then(function () { return loadMonth(n[0], n[1]); }).then(function () {
+      prayersFailed = false;
+    }).catch(function (e) {
+      console.warn('prayers', e);
+      prayersFailed = true;
+      prayersFor = null;
+      setTimeout(function () { ensurePrayers(keyOf(wall(Date.now()))); }, MINUTE);
+    });
+  }
+
+  function nextPrayer(now, todayKey) {
+    var today = days[todayKey], tomorrowKey = addDays(todayKey, 1);
+    if (today) {
+      for (var i = 0; i < PRAYERS.length; i++) {
+        var p = PRAYERS[i];
+        if (!p.prayer) continue;
+        var at = momentOf(todayKey, today.times[p.key]);
+        if (at > now) return { p: p, key: todayKey, at: at };
+      }
+    }
+    var tomorrow = days[tomorrowKey];
+    return tomorrow ? { p: PRAYERS[0], key: tomorrowKey, at: momentOf(tomorrowKey, tomorrow.times.Fajr) } : null;
+  }
+
+  function currentPrayer(now, todayKey) {
+    var today = days[todayKey], found = null;
+    if (!today) return null;
+    PRAYERS.forEach(function (p) {
+      var at = momentOf(todayKey, today.times[p.key]);
+      if (p.prayer && at <= now) found = { p: p, key: todayKey, at: at };
+    });
+    return found;
+  }
+
+  // ---- Hijri date: Umm al-Qura from the browser, Aladhan's value as fallback ----
+  var hijriFormat = null;
+  try {
+    hijriFormat = new Intl.DateTimeFormat('en-u-ca-islamic-umalqura-nu-latn',
+      { timeZone: 'UTC', day: 'numeric', month: 'numeric', year: 'numeric' });
+    if (!hijriFormat.formatToParts || hijriFormat.resolvedOptions().calendar.indexOf('islamic') !== 0) hijriFormat = null;
+  } catch (e) { hijriFormat = null; }
+
+  var hijriOffset = store.get('hijriOffset') || 0;
+
+  function hijri(todayKey) {
+    var key = addDays(todayKey, hijriOffset), d, m, y;
+    if (hijriFormat) {
+      var p = parts(key), f = {};
+      hijriFormat.formatToParts(new Date(Date.UTC(p[0], p[1] - 1, p[2], 12))).forEach(function (x) { f[x.type] = x.value; });
+      d = parseInt(f.day, 10); m = parseInt(f.month, 10); y = parseInt(f.year, 10);
+    } else if (days[key]) {
+      d = days[key].hijri[0]; m = days[key].hijri[1]; y = days[key].hijri[2];
+    } else {
+      return '';
+    }
+    return d + ' ' + HIJRI_MONTHS[m - 1] + ' ' + y + ' هـ';
+  }
+
+  // ---- Weather (Open-Meteo) ----
+  var weather = store.get('weather');
+
+  var WEATHER_URL = 'https://api.open-meteo.com/v1/forecast' +
+    '?latitude=' + CFG.lat + '&longitude=' + CFG.lon +
+    '&current=temperature_2m,relative_humidity_2m,apparent_temperature,precipitation,weather_code,wind_speed_10m' +
+    '&daily=weather_code,temperature_2m_max,temperature_2m_min,precipitation_sum,' +
+    'precipitation_probability_max,relative_humidity_2m_mean' +
+    '&timezone=' + CFG.tz + '&forecast_days=4';
+
+  function loadWeather() {
+    getJson(WEATHER_URL).then(function (json) {
+      weather = json;
+      store.set('weather', json);
+      renderWeather();
+      setTimeout(loadWeather, 30 * MINUTE);
+    }).catch(function (e) {
+      console.warn('weather', e);
+      setTimeout(loadWeather, 3 * MINUTE);
+    });
+  }
+
+  function weatherInfo(code, night) {
+    switch (code) {
+      case 0: return ['صافٍ', night ? '🌙' : '☀️'];
+      case 1: return ['صافٍ غالباً', night ? '🌙' : '🌤️'];
+      case 2: return ['غائم جزئياً', '⛅'];
+      case 3: return ['غائم', '☁️'];
+      case 45: case 48: return ['ضباب', '🌫️'];
+      case 51: case 53: case 55: return ['رذاذ', '🌦️'];
+      case 56: case 57: return ['رذاذ متجمد', '🌧️'];
+      case 61: return ['مطر خفيف', '🌧️'];
+      case 63: return ['مطر متوسط', '🌧️'];
+      case 65: return ['مطر غزير', '🌧️'];
+      case 66: case 67: return ['مطر متجمد', '🌧️'];
+      case 71: case 73: case 75: case 77: return ['ثلج', '❄️'];
+      case 80: case 81: return ['زخات مطر', '🌦️'];
+      case 82: return ['زخات مطر غزيرة', '⛈️'];
+      case 85: case 86: return ['زخات ثلجية', '❄️'];
+      case 95: return ['عاصفة رعدية', '⛈️'];
+      case 96: case 99: return ['عاصفة رعدية مع برد', '⛈️'];
+      default: return ['—', '🌡️'];
+    }
+  }
+
+  function isNight(now, todayKey) {
+    var d = days[todayKey];
+    if (!d) { var h = wall(now).getUTCHours(); return h < 6 || h >= 18; }
+    return now < momentOf(todayKey, d.times.Sunrise) || now >= momentOf(todayKey, d.times.Maghrib);
+  }
+
+  function renderWeather() {
+    if (!weather) return;
+    var now = Date.now(), todayKey = keyOf(wall(now));
+    var c = weather.current, d = weather.daily;
+    var info = weatherInfo(c.weather_code, isNight(now, todayKey));
+    var r = Math.round;
+    var rain = c.precipitation >= 0.1 ? c.precipitation.toFixed(1) + ' مم' : d.precipitation_probability_max[0] + '%';
+    var month = parts(todayKey)[1];
+    var html =
+      '<div class="w-now">' +
+        '<div class="w-icon">' + info[1] + '</div>' +
+        '<div><div class="w-temp">' + r(c.temperature_2m) + '°</div><div class="w-desc">' + info[0] + '</div></div>' +
+        '<div class="w-side">' +
+          (month >= 6 && month <= 9 ? '<div class="khareef">موسم الخريف</div>' : '') +
+          '<div class="muted small">العظمى ' + r(d.temperature_2m_max[0]) + '° · الصغرى ' + r(d.temperature_2m_min[0]) + '°</div>' +
+        '</div>' +
+      '</div>' +
+      '<div class="stats">' +
+        stat('💧 الرطوبة', c.relative_humidity_2m + '%') +
+        stat('🌧️ المطر', rain) +
+        stat('🌡️ الإحساس', r(c.apparent_temperature) + '°') +
+        stat('💨 الرياح', r(c.wind_speed_10m) + ' كم/س') +
+      '</div>' +
+      '<div class="rule"></div>' +
+      '<div class="muted small">توقعات الأيام الثلاثة</div>' +
+      '<div class="days">';
+    for (var i = 1; i < Math.min(4, d.time.length); i++) {
+      var di = weatherInfo(d.weather_code[i], false);
+      html += '<div class="day">' +
+        '<div class="n">' + WEEKDAYS[weekday(d.time[i])] + '</div>' +
+        '<div class="i">' + di[1] + '</div>' +
+        '<div class="t">' + r(d.temperature_2m_max[i]) + '° / ' + r(d.temperature_2m_min[i]) + '°</div>' +
+        '<div class="s">' + di[0] + '</div>' +
+        '<div class="s">💧 ' + d.relative_humidity_2m_mean[i] + '%  🌧️ ' + d.precipitation_probability_max[i] + '%</div>' +
+        (d.precipitation_sum[i] >= 0.1 ? '<div class="r">' + d.precipitation_sum[i].toFixed(1) + ' مم</div>' : '') +
+      '</div>';
+    }
+    $('weather').innerHTML = html + '</div>';
+  }
+
+  function stat(k, v) { return '<div class="stat"><div class="k">' + k + '</div><div class="v">' + v + '</div></div>'; }
+
+  // ---- News ticker (news.json is rebuilt by GitHub Actions every 30 minutes) ----
+  var tickerAnimation = null;
+  var tickerText = '';
+
+  function loadNews() {
+    getJson('news.json?t=' + Date.now()).then(function (json) {
+      store.set('news', json);
+      showNews(json);
+      setTimeout(loadNews, 15 * MINUTE);
+    }).catch(function (e) {
+      console.warn('news', e);
+      var cached = store.get('news');
+      if (cached && !tickerText) showNews(cached);
+      setTimeout(loadNews, 3 * MINUTE);
+    });
+  }
+
+  function showNews(json) {
+    var text = json.items.map(function (h) { return h.source + ': ' + h.title; }).join('     ◆     ');
+    if (text && text !== tickerText) { tickerText = text; startTicker(text); }
+  }
+
+  // Arabic crawl: text enters from the left and moves right, so each headline's start is read first.
+  function startTicker(text) {
+    var el = $('tickerText');
+    el.textContent = text;
+    if (tickerAnimation) tickerAnimation.cancel();
+    if (!el.animate) return;
+    var width = el.offsetWidth, box = $('ticker').clientWidth;
+    var pxPerSecond = 70 * Math.min(window.innerHeight / 540, window.innerWidth / 960);
+    tickerAnimation = el.animate(
+      [{ transform: 'translateX(' + (-width) + 'px)' }, { transform: 'translateX(' + box + 'px)' }],
+      { duration: (box + width) / pxPerSecond * 1000, iterations: Infinity, easing: 'linear' }
+    );
+  }
+
+  // ---- Sky background by time of day, cross-faded between two layers ----
+  var SKY = {
+    night: ['#070b1e', '#16224a', 1],
+    dawn: ['#1f2a5c', '#9a5a7e', 0.4],
+    morning: ['#2c6e9e', '#d99a6c', 0],
+    day: ['#15558c', '#3e8cc4', 0],
+    afternoon: ['#2a5b8a', '#c8873e', 0],
+    sunset: ['#4a2c63', '#d9653b', 0],
+    dusk: ['#151a3e', '#5a2d5e', 0.6],
+  };
+
+  function skyPhase(now, todayKey) {
+    var d = days[todayKey];
+    if (!d) {
+      var h = wall(now).getUTCHours();
+      return h === 5 ? 'dawn' : h < 5 ? 'night' : h <= 8 ? 'morning' : h <= 14 ? 'day' : h <= 16 ? 'afternoon' :
+        h === 17 ? 'sunset' : h === 18 ? 'dusk' : 'night';
+    }
+    function at(k) { return momentOf(todayKey, d.times[k]); }
+    if (now < at('Fajr')) return 'night';
+    if (now < at('Sunrise')) return 'dawn';
+    if (now < at('Sunrise') + 120 * MINUTE) return 'morning';
+    if (now < at('Asr')) return 'day';
+    if (now < at('Maghrib') - 40 * MINUTE) return 'afternoon';
+    if (now < at('Maghrib') + 20 * MINUTE) return 'sunset';
+    if (now < at('Isha')) return 'dusk';
+    return 'night';
+  }
+
+  var currentSky = null, skyFront = 'skyA';
+
+  function setSky(name) {
+    if (name === currentSky) return;
+    var s = SKY[name], back = skyFront === 'skyA' ? 'skyB' : 'skyA';
+    $(back).style.background = 'linear-gradient(to bottom, ' + s[0] + ', ' + s[1] + ')';
+    $(back).style.opacity = 1;
+    $(skyFront).style.opacity = 0;
+    skyFront = back;
+    $('stars').style.opacity = s[2];
+    currentSky = name;
+  }
+
+  function makeStars() {
+    var html = '', seed = 7;
+    function rnd() { seed = (seed * 16807) % 2147483647; return seed / 2147483647; }
+    for (var i = 0; i < 90; i++) {
+      var size = 1.5 + rnd() * 3, alpha = 0.25 + rnd() * 0.55;
+      html += '<i style="left:' + (rnd() * 100) + '%;top:' + (rnd() * 60) + '%;width:' + size + 'px;height:' + size +
+        'px;opacity:' + alpha + '"></i>';
+    }
+    $('stars').innerHTML = html;
+  }
+
+  // ---- Rendering every second ----
+  var renderedDay = null, renderedRow = '';
+
+  function renderPrayerRow(now, rowKey, next) {
+    var d = days[rowKey];
+    if (!d) {
+      var msg = prayersFailed ? 'تعذّر تحميل أوقات الصلاة — ستتم إعادة المحاولة' : 'جارٍ تحميل أوقات الصلاة…';
+      if (renderedRow !== msg) { $('prayers').innerHTML = '<div class="muted loading">' + msg + '</div>'; renderedRow = msg; }
+      return;
+    }
+    var html = PRAYERS.map(function (p) {
+      var at = momentOf(rowKey, d.times[p.key]);
+      var cls = next && next.p === p && next.key === rowKey ? 'next' : at <= now ? 'past' : !p.prayer ? 'minor' : '';
+      return '<div class="pc ' + cls + '"><div class="n">' + label(p, rowKey) + '</div><div class="t">' + time12(d.times[p.key]) + '</div></div>';
+    }).join('');
+    if (html !== renderedRow) { $('prayers').innerHTML = html; renderedRow = html; }
+  }
+
+  function tick() {
+    var now = Date.now(), w = wall(now), todayKey = keyOf(w);
+    ensurePrayers(todayKey);
+
+    var h = w.getUTCHours();
+    $('hm').textContent = (h % 12 || 12) + ':' + pad(w.getUTCMinutes());
+    $('sec').textContent = pad(w.getUTCSeconds());
+    $('ampm').textContent = h < 12 ? 'صباحاً' : 'مساءً';
+
+    if (renderedDay !== todayKey) {
+      var p = parts(todayKey);
+      $('greg').textContent = WEEKDAYS[weekday(todayKey)] + '  ' + p[2] + ' ' + GREG_MONTHS[p[1] - 1] + ' ' + p[0] + 'م';
+      renderedDay = todayKey;
+    }
+    var hijriText = hijri(todayKey);
+    if ($('hijri').textContent !== hijriText) $('hijri').textContent = hijriText;
+
+    var next = nextPrayer(now, todayKey);
+    if (next) {
+      var left = Math.max(0, Math.floor((next.at - now) / 1000));
+      $('nextName').textContent = label(next.p, next.key) + '  ' + time12(days[next.key].times[next.p.key]);
+      $('countdown').textContent = pad(Math.floor(left / 3600)) + ':' + pad(Math.floor(left % 3600 / 60)) + ':' + pad(left % 60);
+    }
+    var cur = currentPrayer(now, todayKey);
+    var since = cur ? Math.floor((now - cur.at) / MINUTE) : -1;
+    $('nowBanner').textContent = cur && since < 20 ? 'حان وقت صلاة ' + label(cur.p, cur.key) + ' منذ ' + since + ' دقيقة' : '';
+
+    // After Isha the row switches to tomorrow's times, with Fajr highlighted.
+    renderPrayerRow(now, next && next.key !== todayKey ? next.key : todayKey, next);
+    setSky(skyPhase(now, todayKey));
+
+    // Reload once a night so a long-running TV picks up new versions of the page.
+    if (h === 3 && now - startedAt > 6 * 3600 * 1000) location.reload();
+  }
+
+  // ---- Remote control: OK opens settings, arrows move, Back closes ----
+  var KEY = { enter: 13, left: 37, up: 38, right: 39, down: 40 };
+  var BACK_KEYS = [8, 27, 461, 10009];
+
+  function settingsOpen() { return !$('settings').classList.contains('hidden'); }
+  function buttons() { return Array.prototype.slice.call(document.querySelectorAll('#settings .btn')); }
+
+  function openSettings() {
+    $('settings').classList.remove('hidden');
+    updateSettings();
+    var current = document.querySelector('#settings [data-offset="' + hijriOffset + '"]');
+    (current || buttons()[0]).focus();
+  }
+  function closeSettings() {
+    $('settings').classList.add('hidden');
+    if (document.activeElement) document.activeElement.blur();
+  }
+  function updateSettings() {
+    buttons().forEach(function (b) {
+      var o = b.getAttribute('data-offset');
+      if (o !== null) b.textContent = (+o === hijriOffset ? '✓ ' : '') + b.textContent.replace(/^✓ /, '');
+    });
+    $('hijriPreview').textContent = 'التاريخ الهجري: ' + hijri(keyOf(wall(Date.now())));
+  }
+
+  document.addEventListener('keydown', function (e) {
+    var code = e.keyCode;
+    if (!settingsOpen()) {
+      if (code === KEY.enter) { e.preventDefault(); openSettings(); }
+      return;
+    }
+    if (BACK_KEYS.indexOf(code) >= 0) { e.preventDefault(); closeSettings(); return; }
+    var list = buttons(), i = list.indexOf(document.activeElement);
+    // Some TV engines don't turn OK into a button click, so do it here.
+    if (code === KEY.enter) { e.preventDefault(); if (i >= 0) list[i].click(); return; }
+    // In RTL the first button is on the right, so Left/Down move forward.
+    if (code === KEY.left || code === KEY.down) { e.preventDefault(); list[Math.min(list.length - 1, i + 1)].focus(); }
+    if (code === KEY.right || code === KEY.up) { e.preventDefault(); list[Math.max(0, i - 1)].focus(); }
+  });
+
+  $('settings').addEventListener('click', function (e) {
+    var b = e.target.closest ? e.target.closest('.btn') : e.target;
+    if (!b) return;
+    var offset = b.getAttribute('data-offset'), action = b.getAttribute('data-action');
+    if (offset !== null) {
+      hijriOffset = +offset;
+      store.set('hijriOffset', hijriOffset);
+      updateSettings();
+      tick();
+    } else if (action === 'refresh') {
+      try {
+        Object.keys(localStorage).forEach(function (k) { if (k.indexOf('prayers_') === 0) localStorage.removeItem(k); });
+      } catch (err) { /* storage unavailable */ }
+      location.reload();
+    } else if (action === 'close') {
+      closeSettings();
+    }
+  });
+
+  // ---- Start ----
+  var startedAt = Date.now();
+  makeStars();
+  renderWeather();
+  tick();
+  setTimeout(function () { $('hint').style.opacity = 0; }, 12000);
+  loadWeather();
+  loadNews();
+  (function loop() { tick(); setTimeout(loop, 1000 - Date.now() % 1000); })();
+  window.addEventListener('resize', function () { if (tickerText) startTicker(tickerText); });
+})();

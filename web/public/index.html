@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>شاشة صلالة</title>
+  <link rel="icon" href="icon.png">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div id="skyA" class="sky"></div>
+  <div id="skyB" class="sky"></div>
+  <div id="stars"></div>
+  <div id="dim"></div>
+
+  <main>
+    <section class="top">
+      <div class="clock-col">
+        <div class="city">صلالة · سلطنة عُمان</div>
+        <div class="clock">
+          <span id="hm">--:--</span>
+          <span class="clock-side"><span id="sec">00</span><span id="ampm"></span></span>
+        </div>
+        <div id="greg" class="date"></div>
+        <div id="hijri" class="date gold"></div>
+        <div class="spacer"></div>
+        <div class="next-card">
+          <div id="nowBanner" class="now-banner"></div>
+          <div class="next-row">
+            <div>
+              <div class="lbl">الصلاة القادمة</div>
+              <div id="nextName" class="next-name">جارٍ تحميل أوقات الصلاة…</div>
+            </div>
+            <div>
+              <div class="lbl">متبقٍ</div>
+              <div id="countdown" class="countdown">--:--:--</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div id="weather" class="weather panel">
+        <div class="muted">جارٍ تحميل الطقس…</div>
+      </div>
+    </section>
+
+    <section id="prayers" class="prayers">
+      <div class="muted loading">جارٍ تحميل أوقات الصلاة…</div>
+    </section>
+  </main>
+
+  <div id="hint" class="hint">اضغط OK في الريموت لفتح الإعدادات</div>
+  <footer class="news">
+    <div class="news-label">أخبار</div>
+    <div id="ticker" class="ticker"><span id="tickerText">جارٍ تحميل الأخبار…</span></div>
+  </footer>
+
+  <div id="settings" class="settings hidden">
+    <div class="settings-card">
+      <div class="settings-title">الإعدادات</div>
+      <div class="muted">تعديل التاريخ الهجري حسب إعلان رؤية الهلال في سلطنة عُمان</div>
+      <div class="btn-row">
+        <button class="btn" data-offset="-1">يوم ناقص (−1)</button>
+        <button class="btn" data-offset="0">بدون تعديل</button>
+        <button class="btn" data-offset="1">يوم زائد (+1)</button>
+      </div>
+      <div id="hijriPreview" class="gold bold preview"></div>
+      <div class="rule"></div>
+      <div class="muted small">أوقات الصلاة مطابَقة لتقويم وزارة الأوقاف والشؤون الدينية لصلالة.</div>
+      <div class="btn-row">
+        <button class="btn" data-action="refresh">تحديث البيانات الآن</button>
+        <button class="btn" data-action="close">إغلاق</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
