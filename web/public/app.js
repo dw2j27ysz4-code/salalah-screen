@@ -15,6 +15,8 @@
   };
   var OMAN_OFFSET_MS = 4 * 3600 * 1000; // Oman has no daylight saving
   var MINUTE = 60 * 1000;
+  // Commit stamped into index.html by the deploy workflow ("__V__" when run locally).
+  var VERSION = ((document.currentScript && document.currentScript.src.match(/[?&]v=([^&]+)/)) || [])[1] || '__V__';
 
   var PRAYERS = [
     { key: 'Fajr', w: 'p_fajr', prayer: true },
@@ -419,8 +421,20 @@
     renderPrayerRow(now, next && next.key !== todayKey ? next.key : todayKey, next);
     setSky(skyPhase(now, todayKey));
 
-    // Reload once a night so a long-running TV picks up new versions of the page.
+    // Reload once a night as a fallback for long-running TVs.
     if (h === 3 && now - startedAt > 6 * 3600 * 1000) location.reload();
+  }
+
+  // The TV keeps the app open, so a new deploy would otherwise never be seen.
+  // A new URL (?v=) skips the browser's cached index.html.
+  function checkVersion() {
+    getJson('version.json?t=' + Date.now()).then(function (json) {
+      if (VERSION !== '__V__' && json.v && json.v !== VERSION) {
+        location.replace(location.pathname + '?v=' + json.v);
+      }
+    }).catch(function () { /* offline: try again later */ }).then(function () {
+      setTimeout(checkVersion, 5 * MINUTE);
+    });
   }
 
   // ---- Remote control: OK opens settings, arrows move, Back closes ----
@@ -493,6 +507,7 @@
   setTimeout(function () { $('hint').style.opacity = 0; }, 12000);
   loadWeather();
   loadNews();
+  setTimeout(checkVersion, MINUTE);
   (function loop() { tick(); setTimeout(loop, 1000 - Date.now() % 1000); })();
   window.addEventListener('resize', function () { if (tickerText) startTicker(tickerText); });
 })();

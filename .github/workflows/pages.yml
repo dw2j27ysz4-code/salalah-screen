@@ -28,6 +28,12 @@ jobs:
         with:
           node-version: 20
       - run: node web/scripts/fetch-news.mjs
+      # Stamp assets with the commit so TVs never run a cached copy; the page
+      # polls version.json and reloads itself when a new commit is deployed.
+      - run: |
+          V="${GITHUB_SHA::7}"
+          sed -i "s/__V__/$V/g" web/public/index.html
+          echo "{\"v\":\"$V\"}" > web/public/version.json
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:
