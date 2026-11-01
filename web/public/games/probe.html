@@ -1,0 +1,82 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>probe</title>
+  <style>html, body { margin: 0; height: 100%; overflow: hidden; background: #1c1c1e; color: #fff; font: 3vh sans-serif; }
+    canvas { position: fixed; inset: 0; width: 100%; height: 100%; } #log { position: fixed; top: 2vh; left: 2vw; z-index: 2; white-space: pre; }</style>
+  <script src="https://cdn.jsdelivr.net/npm/mqtt@5.10.1/dist/mqtt.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/pixi.js@7.4.2/dist/pixi.min.js"></script>
+</head>
+<body>
+  <div id="log">قياس أداء الرسوم…</div>
+  <script>
+    // Graphics benchmark for the TV: same scene (full-screen gradient + N glowing additive
+    // sprites) drawn with Canvas 2D and with PixiJS/WebGL; frame rates are published to
+    // salalahtv/<room>/report so they can be read on the computer.
+    (function () {
+      var room = new URLSearchParams(location.search).get('room') || 'probe';
+      var results = { ua: navigator.userAgent, screen: innerWidth + 'x' + innerHeight, dpr: devicePixelRatio };
+      var client = mqtt.connect('wss://broker.hivemq.com:8884/mqtt');
+      function report(done) { results.done = !!done; client.publish('salalahtv/' + room + '/report', JSON.stringify(results)); document.getElementById('log').textContent = JSON.stringify(results, null, 1); }
+
+      var gl = document.createElement('canvas');
+      results.webgl2 = !!gl.getContext('webgl2');
+      results.webgl1 = !!(document.createElement('canvas').getContext('webgl'));
+
+      function sprite(size, color) {
+        var c = document.createElement('canvas'); c.width = c.height = size;
+        var g = c.getContext('2d'), gr = g.createRadialGradient(size / 2, size / 2, 0, size / 2, size / 2, size / 2);
+        gr.addColorStop(0, '#fff'); gr.addColorStop(0.2, color); gr.addColorStop(1, 'rgba(0,0,0,0)');
+        g.fillStyle = gr; g.fillRect(0, 0, size, size); return c;
+      }
+
+      function runCanvas(n, ms) {
+        return new Promise(function (done) {
+          var c = document.createElement('canvas'); c.width = innerWidth; c.height = innerHeight; document.body.appendChild(c);
+          var g = c.getContext('2d'), sp = sprite(64, '#5fd0ff'), frames = 0, t0 = performance.now();
+          var ps = []; for (var i = 0; i < n; i++) ps.push([Math.random() * c.width, Math.random() * c.height, Math.random() * 6 - 3, Math.random() * 6 - 3]);
+          (function loop(now) {
+            var bg = g.createLinearGradient(0, 0, 0, c.height); bg.addColorStop(0, '#4a4b50'); bg.addColorStop(1, '#1c1c1e');
+            g.globalCompositeOperation = 'source-over'; g.fillStyle = bg; g.fillRect(0, 0, c.width, c.height);
+            g.globalCompositeOperation = 'lighter';
+            ps.forEach(function (p) { p[0] = (p[0] + p[2] + c.width) % c.width; p[1] = (p[1] + p[3] + c.height) % c.height; g.drawImage(sp, p[0] - 32, p[1] - 32); });
+            frames++;
+            if (now - t0 < ms) requestAnimationFrame(loop);
+            else { c.remove(); done(Math.round(frames * 1000 / (now - t0))); }
+          })(t0);
+        });
+      }
+
+      function runPixi(n, ms, withBlur) {
+        return new Promise(function (done) {
+          if (!window.PIXI || !results.webgl1) return done(null);
+          var app = new PIXI.Application({ width: innerWidth, height: innerHeight, backgroundColor: 0x1c1c1e, antialias: false });
+          document.body.appendChild(app.view);
+          var tex = PIXI.Texture.from(sprite(64, '#f6cf6a')), cont = new PIXI.ParticleContainer(n, { position: true });
+          var ps = [];
+          for (var i = 0; i < n; i++) { var s = new PIXI.Sprite(tex); s.blendMode = PIXI.BLEND_MODES.ADD; s.x = Math.random() * innerWidth; s.y = Math.random() * innerHeight; s.vx = Math.random() * 6 - 3; s.vy = Math.random() * 6 - 3; cont.addChild(s); ps.push(s); }
+          var holder = new PIXI.Container(); holder.addChild(cont); app.stage.addChild(holder);
+          if (withBlur) holder.filters = [new PIXI.BlurFilter(4)];
+          var frames = 0, t0 = performance.now();
+          app.ticker.add(function () {
+            ps.forEach(function (s) { s.x = (s.x + s.vx + innerWidth) % innerWidth; s.y = (s.y + s.vy + innerHeight) % innerHeight; });
+            frames++;
+            if (performance.now() - t0 > ms) { app.ticker.stop(); var fps = Math.round(frames * 1000 / (performance.now() - t0)); app.destroy(true); done(fps); }
+          });
+        });
+      }
+
+      client.on('connect', function () {
+        report();
+        runCanvas(60, 3000).then(function (f) { results.canvas60 = f; report(); return runCanvas(250, 3000); })
+          .then(function (f) { results.canvas250 = f; report(); return runPixi(250, 3000, false); })
+          .then(function (f) { results.pixi250 = f; report(); return runPixi(1000, 3000, false); })
+          .then(function (f) { results.pixi1000 = f; report(); return runPixi(250, 3000, true); })
+          .then(function (f) { results.pixi250blur = f; report(true); })
+          .catch(function (e) { results.error = String(e); report(true); });
+      });
+    })();
+  </script>
+</body>
+</html>
