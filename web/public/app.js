@@ -300,22 +300,24 @@
   }
 
   // ---- Sky background by time of day, cross-faded between two layers ----
-  // [top, bottom, star opacity, glow A, glow B, glow C]. The saturated glows sit
-  // behind the glass panels so the frosted material has light to diffuse.
+  // Apple-style metallic graphite ("space gray") that only shifts in brightness and
+  // a faint warm/cool cast through the day. [top, bottom, star opacity, glow A, B, C];
+  // the soft glows sit behind the glass panels so the material has light to catch.
   var SKY = {
-    night: ['#060a1c', '#141f46', 1, '#3b3fae', '#1f6f9e', '#6b2f8f'],
-    dawn: ['#1c2658', '#8e5479', 0.4, '#e0779a', '#5a6be0', '#f2a46b'],
-    morning: ['#2a6a99', '#d4966a', 0, '#ffc07a', '#4fb3e8', '#f08a7a'],
-    day: ['#13528a', '#3b88c0', 0, '#5fd0ff', '#2f6fe0', '#9be3ff'],
-    afternoon: ['#285887', '#c2823c', 0, '#ffb44d', '#3f8fe0', '#ff7f6a'],
-    sunset: ['#45295e', '#d25f37', 0, '#ff6a3d', '#b23fa0', '#ffb347'],
-    dusk: ['#131838', '#552a5a', 0.6, '#8a3fb8', '#d0507a', '#2e4fb0'],
+    night: ['#121214', '#232326', 0.5, '#5a5f70', '#3f4452', '#4a4658'],
+    dawn: ['#2a2a2e', '#4a4446', 0.2, '#8a7a80', '#6a6e7c', '#9a8676'],
+    morning: ['#4a4b50', '#6b6a6c', 0, '#a0a3ab', '#8c9099', '#b0a69a'],
+    day: ['#505257', '#727479', 0, '#b4b8c0', '#959aa4', '#c2c5cb'],
+    afternoon: ['#4b4b4f', '#6e6a66', 0, '#ada296', '#8d9199', '#b8a690'],
+    sunset: ['#38363a', '#5c524e', 0, '#a8806a', '#7a6e78', '#b08a6e'],
+    dusk: ['#1e1e22', '#38363c', 0.3, '#6e6680', '#545a6c', '#7a6a72'],
   };
 
   function skyBackground(s) {
-    return 'radial-gradient(38% 46% at 18% 30%, ' + s[3] + 'aa, transparent 70%),' +  // behind weather
-      'radial-gradient(42% 36% at 62% 92%, ' + s[4] + '99, transparent 70%),' +       // behind prayer bar
-      'radial-gradient(30% 34% at 88% 78%, ' + s[5] + '88, transparent 70%),' +       // behind next card
+    return 'linear-gradient(125deg, rgba(255,255,255,0.07) 0%, rgba(255,255,255,0) 35%, rgba(255,255,255,0.04) 60%, rgba(255,255,255,0) 80%),' + // brushed-metal sheen
+      'radial-gradient(38% 46% at 18% 30%, ' + s[3] + '99, transparent 70%),' +  // behind weather
+      'radial-gradient(42% 36% at 62% 92%, ' + s[4] + '88, transparent 70%),' +  // behind prayer bar
+      'radial-gradient(30% 34% at 88% 78%, ' + s[5] + '77, transparent 70%),' +  // behind next card
       'linear-gradient(to bottom, ' + s[0] + ', ' + s[1] + ')';
   }
 
