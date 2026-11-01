@@ -233,15 +233,15 @@ let save = { unlocked: 1, stars: [0, 0, 0, 0, 0, 0], best: [0, 0, 0, 0, 0, 0], b
 try { const s = JSON.parse(localStorage.getItem(SAVE_KEY)); if (s && s.stars) save = Object.assign(save, s); } catch (e) {}
 const TV = /[?&]tv=1/.test(location.search);
 if (TV) {
-  THREE.MeshStandardMaterial = class extends THREE.MeshLambertMaterial {
-    constructor(p = {}) { const { roughness, metalness, flatShading, envMapIntensity, ...rest } = p; super(rest); }
+  THREE.MeshStandardMaterial = class extends THREE.MeshPhongMaterial {
+    constructor(p = {}) { const { roughness, metalness, envMapIntensity, ...rest } = p; super(Object.assign({ shininess: 6, specular: 0x151515 }, rest)); }
   };
 }
 if (TV) { document.documentElement.classList.add('tv'); if (!save.tvInit) { save.quality = 'low'; save.tvInit = true; } }
 const persist = () => { try { localStorage.setItem(SAVE_KEY, JSON.stringify(save)); } catch (e) {} };
 
 /* ---------------- renderer ---------------- */
-const renderer = new THREE.WebGLRenderer({ antialias: !TV, powerPreference: 'high-performance' });
+const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
 renderer.setPixelRatio(Math.min(devicePixelRatio, isMobile ? 1.5 : 2));
 renderer.setSize(innerWidth, innerHeight);
 renderer.outputEncoding = THREE.sRGBEncoding;
@@ -705,7 +705,7 @@ const P = {
     g.add(part(G.box, mat('#fff4c9', { emissive: '#ffd27a', emissiveIntensity: .8 }), [.35, .14, .25], [side * -1.15, 4.45, 0]));
     // little Omani flag
     const flag = new THREE.Mesh(G.plane, tm({ side: THREE.DoubleSide, map: omanFlagTex() }));
-    flag.scale.set(.9, .6, 1); flag.position.set(0.45 * side, 3.5, 0); flag.rotation.y = Math.PI / 2; flag.userData.keep = true; g.add(flag); g.userData.flag = flag;
+    flag.scale.set(.9, .6, 1); flag.position.set(0.45 * side, 3.5, 0); flag.rotation.y = Math.PI / 2; flag.userData.keep = true; flag.name = 'flag'; g.add(flag); g.userData.flag = flag;
     return g;
   },
   house(side, souq) {
@@ -841,7 +841,7 @@ const OB = {
     const tex = textTex(txt, 512, 128, '#fff', '#d3242b', { drawBg: (x, w, h) => { x.fillStyle = '#fff'; x.fillRect(0, 0, w, h); x.fillStyle = '#d3242b'; x.fillRect(0, 0, w, 14); x.fillStyle = '#2f8f3a'; x.fillRect(0, h - 14, w, 14); x.fillStyle = '#d3242b'; x.fillRect(0, 0, 40, h); }, size: 64 });
     for (const sx of [-1.3, 1.3]) g.add(part(G.cyl, mat('#e9e4d8', { roughness: .4 }), [.07, 2.6, .07], [sx, 1.3, 0]));
     const cl = new THREE.Mesh(new THREE.PlaneGeometry(2.6, .8, 8, 1), tm({ map: tex, side: THREE.DoubleSide, roughness: .8 }));
-    cl.position.set(0, 1.55, 0); cl.castShadow = true; cl.userData.keep = true; g.add(cl); g.userData.cloth = cl;
+    cl.position.set(0, 1.55, 0); cl.castShadow = true; cl.userData.keep = true; cl.name = 'cloth'; g.add(cl); g.userData.cloth = cl;
     for (let i = 0; i < 7; i++) g.add(part(new THREE.ConeGeometry(.12, .3, 3), mat(['#d3242b', '#fff', '#2f8f3a'][i % 3], { side: THREE.DoubleSide }), null, [-1.1 + i * .37, 2.4, 0], [Math.PI, 0, 0]));
     g.add(part(G.box, mat('#ddd'), [2.6, .02, .02], [0, 2.55, 0]));
     return g; } },
@@ -856,7 +856,7 @@ const OB = {
     neck.add(part(G.sph, C, [.17, .17, .38], [0, .85, -.55]));
     neck.add(part(G.sph, mat('#1a1208'), [.04, .04, .04], [.13, .9, -.62])); neck.add(part(G.sph, mat('#1a1208'), [.04, .04, .04], [-.13, .9, -.62]));
     for (const sx of [-.3, .3]) neck.add(part(G.cone, C, [.05, .14, .05], [sx * .4, 1.05, -.45]));
-    g.userData.head = neck;
+    neck.name = 'head'; g.userData.head = neck;
     for (const sx of [-.3, .3]) for (const sz of [-.6, .6]) g.add(part(G.cyl, C, [.09, 1.3, .09], [sx, .65, sz]));
     g.add(part(G.cyl, C, [.04, .5, .04], [0, 1.55, 1.0], [.4, 0, 0]));
     return g; } },
@@ -868,7 +868,7 @@ const OB = {
     head.add(part(G.sph, C, [.24, .26, .36], [0, 0, 0]));
     head.add(part(G.sph, mat('#c7a08a'), [.18, .14, .14], [0, -.08, -.3]));
     for (const sx of [-1, 1]) { head.add(part(G.cone, mat('#e8dcc4'), [.04, .22, .04], [sx * .17, .24, .02], [0, 0, -sx * .5])); head.add(part(G.sph, C, [.12, .05, .07], [sx * .26, .08, .05])); }
-    g.userData.head = head;
+    head.name = 'head'; g.userData.head = head;
     for (const sx of [-.28, .28]) for (const sz of [-.55, .55]) g.add(part(G.cyl, C, [.08, .7, .08], [sx, .35, sz]));
     g.add(part(G.cyl, C, [.03, .6, .03], [0, .9, .92], [.3, 0, 0]));
     return g; } },
@@ -1394,6 +1394,32 @@ function bake(root) {
 }
 function OBboat(x, z) { const b = P.boat(1); b.position.set(x, -.1, z); b.scale.setScalar(2.2); b.userData.anim = (t) => { b.position.y = Math.sin(t + x) * .3 - .1; b.rotation.z = Math.sin(t * .8 + z) * .06; }; return b; }
 
+const POOL_N = 6;
+const pools = new Map();
+let lmPre = [];
+// copy a prepared object; meshes share geometry and materials, references to animated parts are re-found by name
+function cloneObj(src) {
+  const ud = src.userData; src.userData = {};
+  const c = src.clone(); src.userData = ud;
+  for (const k in ud) { const v = ud[k]; c.userData[k] = v && v.isObject3D ? c.getObjectByName(v.name) : v && typeof v === 'object' ? Object.assign({}, v) : v; }
+  return c;
+}
+function pooled(key, make) {
+  let p = pools.get(key);
+  if (!p) { p = Array.from({ length: POOL_N }, make); pools.set(key, p); }
+  return cloneObj(pick(p));
+}
+const propMaker = (type, side, extra) => () => bake(P[type](side, extra));
+const obsMaker = name => () => { const o = OB[name].build(level); if (o.userData.head) o.userData.head.userData.keep = true; return bake(o); };
+const disposeBaked = o => o.traverse(m => { if (m.userData.baked) m.geometry.dispose(); });
+function prebuild() {
+  for (const p of pools.values()) p.forEach(disposeBaked);
+  pools.clear(); lmPre.forEach(disposeBaked);
+  for (const row of ['near', 'far']) for (const e of level.props[row]) for (const sd of [-1, 1]) if (!(e[3] && e[3] !== sd)) pooled(`P:${e[0]}:${sd}:${e[2]}`, propMaker(e[0], sd, e[2]));
+  for (const kind in level.obstacles) for (const nm of level.obstacles[kind]) pooled('OB:' + nm, obsMaker(nm));
+  lmPre = (level.landmarks || []).map(d => bake(LANDMARK[d.b]()));
+}
+const SPIN = new Set(['palm', 'tree', 'rock', 'hill', 'banana', 'cliffRock', 'geyser', 'cowProp', 'camelProp']);
 function weighted(list) { let tot = 0; for (const e of list) tot += e[1]; let r = Math.random() * tot; for (const e of list) { if ((r -= e[1]) <= 0) return e; } return list[0]; }
 
 /* ---------------- run state ---------------- */
@@ -1419,30 +1445,30 @@ function spawnProp(z) {
   for (const s of [-1, 1]) {
     if (movers.some(m => m.kind === 'landmark' && (m.side === s || m.side === 0) && z - m.z > -m.half && z - m.z < m.half + (m.side ? 45 : 0))) continue;
     // near row
-    if (Math.random() < (TV ? .5 : .8)) {
+    if (Math.random() < (TV ? .65 : .8)) {
       const e = weighted(level.props.near);
       if (!(e[3] && e[3] !== s)) {
-        const o = P[e[0]](s, e[2]);
+        const o = pooled(`P:${e[0]}:${s}:${e[2]}`, propMaker(e[0], s, e[2])); if (SPIN.has(e[0])) o.rotation.y = rand(0, 6.28);
         let x = s * rand(5.6, 9);
         if (e[0] === 'house' || e[0] === 'building') x = s * rand(9, 11);
         if (level.sea && level.sea.side === s && (e[0] === 'house' || e[0] === 'building')) x = s * 12;
         o.position.set(x, 0, z + rand(-1, 1));
-        addMover(bake(o), 'prop', z);
+        addMover(o, 'prop', z);
       }
     }
     // far row (thinned on low quality)
-    if (Math.random() < (TV ? .22 : qLow() ? .4 : .7)) {
+    if (Math.random() < (TV ? .35 : qLow() ? .4 : .7)) {
       const e = weighted(level.props.far);
       if (!(e[3] && e[3] !== s)) {
         if (level.sea && level.sea.side === s && !['boat', 'geyser', 'palm', 'shelter'].includes(e[0])) continue;
-        const o = P[e[0]](s, e[2]);
+        const o = pooled(`P:${e[0]}:${s}:${e[2]}`, propMaker(e[0], s, e[2])); if (SPIN.has(e[0])) o.rotation.y = rand(0, 6.28);
         let x = s * rand(13, 30);
         if (e[0] === 'boat') x = s * rand(32, 60);
         if (e[0] === 'geyser') x = s * rand(24, 28);
         if (e[0] === 'hill') x = s * rand(18, 40);
         o.position.set(x, e[0] === 'boat' ? -.2 : 0, z + rand(-2, 2));
         if (e[0] === 'boat') { o.scale.setScalar(1.8); o.userData.bob = rand(0, 6); }
-        addMover(bake(o), 'prop', z);
+        addMover(o, 'prop', z);
       }
     }
   }
@@ -1512,12 +1538,10 @@ function spawnRow(z) {
   }
   const free = [0, 1, 2].filter(l => !types.some(t => t.lane === l));
   for (const t of types) {
-    const def = OB[t.name]; const o = def.build(level);
+    const def = OB[t.name]; const o = pooled('OB:' + t.name, obsMaker(t.name));
     let vz = 0;
     if (t.name === 'truck' && Math.random() < level.moving && free.length) vz = rand(6, 10);
     if (def.kind === 'block' && t.name !== 'truck') o.rotation.y = Math.random() < .5 ? 0 : Math.PI;
-    if (o.userData.head) o.userData.head.userData.keep = true;
-    bake(o);
     o.position.x = LANES[t.lane];
     const m = addMover(o, 'obs', vz ? z - 25 : z, { def, lane: t.lane, vz, name: t.name });
     // Al Haffa: some souq carts swerve into the next lane as you approach
@@ -1583,6 +1607,7 @@ function buildEnv(i) {
   // wet roads shine in the khareef rain
   trackMat.roughness = HZ().rain ? .3 : .85; trackMat.metalness = HZ().rain ? .2 : 0;
   rain.visible = !!HZ().rain;
+  prebuild();
   propCursor = 15; while (propCursor > SPAWN_Z) { spawnProp(propCursor); propCursor -= rand(2.5, 4.5); }
   rowCursor = -70; lmIdx = 0; gateSpawned = false;
   fogSurge = 0; fogSurgeT = rand(10, 16);
@@ -1950,7 +1975,7 @@ document.addEventListener('visibilitychange', () => { if (document.hidden && sta
 
 function applyQuality() {
   const low = qLow();
-  renderer.setPixelRatio(TV ? clamp(540 / innerHeight, .35, 1) : low ? 1 : Math.min(devicePixelRatio, isMobile ? 1.5 : 2));
+  renderer.setPixelRatio(TV ? clamp(720 / innerHeight, .5, 1) : low ? 1 : Math.min(devicePixelRatio, isMobile ? 1.5 : 2));
   renderer.setSize(innerWidth, innerHeight);
   const shadows = !low && !TV;
   if (renderer.shadowMap.enabled !== shadows) {
@@ -2048,7 +2073,7 @@ function update(dt) {
     }
     const lms = level.landmarks || [];
     while (lmIdx < lms.length && lvlDist() + LM_DIST >= lms[lmIdx].at * lvlLen()) {
-      const d = lms[lmIdx++]; const o = bake(LANDMARK[d.b]()); o.position.x = d.x; o.rotation.y = d.ry || 0;
+      const d = lms[lmIdx++]; const o = lmPre[lmIdx - 1] || bake(LANDMARK[d.b]()); o.position.x = d.x; o.rotation.y = d.ry || 0;
       addMover(o, 'landmark', -LM_DIST, { side: d.side, half: d.half, name: d.b });
     }
     if (mode === 'levels' && !gateSpawned && dist + (-SPAWN_Z) >= level.length) { gateSpawned = true; addMover(buildGate(), 'gate', -(level.length - dist)); }
@@ -2182,7 +2207,7 @@ function update(dt) {
       }
     } else if (m.kind === 'gate' && m.z > 0 && state === 'play') { m.done = true; levelDone(); }
   }
-  for (let i = movers.length - 1; i >= 0; i--) if (movers[i].z - (movers[i].half || 0) > 24) { scene.remove(movers[i].obj); movers[i].obj.traverse(o => { if (o.userData.baked) o.geometry.dispose(); }); movers.splice(i, 1); }
+  for (let i = movers.length - 1; i >= 0; i--) if (movers[i].z - (movers[i].half || 0) > 24) { scene.remove(movers[i].obj); movers.splice(i, 1); }
 
   // celebration fireworks over the landmark
   if (state === 'complete') {
@@ -2283,10 +2308,13 @@ function updateCamera(dt) {
 }
 
 /* loop */
-let last = performance.now();
+let last = performance.now(), sdt = 1 / 60;
 function frame(t) {
   requestAnimationFrame(frame);
-  const dt = Math.min(.05, (t - last) / 1000); last = t;
+  if (TV && t - last < 1000 / 30 - 4) return;
+  const raw = Math.min(.1, (t - last) / 1000); last = t;
+  sdt += (raw - sdt) * .2;
+  const dt = Math.min(.05, TV ? sdt : raw);
   if (state !== 'loading') { update(dt); updateCamera(dt); }
   renderer.render(scene, camera);
 }
