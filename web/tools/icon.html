@@ -1,0 +1,86 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="utf-8">
+  <title>Tile icon</title>
+  <style>body { background: #888; margin: 24px; } canvas { width: 256px; height: 256px; border-radius: 40px; margin: 8px; }</style>
+</head>
+<body>
+  <canvas id="c" width="512" height="512"></canvas>
+  <canvas id="small" width="512" height="512" style="width:128px;height:128px;border-radius:20px"></canvas>
+  <div id="log"></div>
+  <script>
+    // Launcher tile for the VIDAA home screen (square, full bleed: the launcher rounds it).
+    // Graphite metal like the screen's background, a gold crescent, and صلالة in Thmanyah.
+    var S = 512, GOLD_HI = '#ffe39a', GOLD = '#f6cf6a', GOLD_LO = '#c99a2e';
+    var font = new FontFace('ThmanyahDisplay', 'url(font/thmanyahserifdisplay/woff2/thmanyahserifdisplay-Bold.woff2)');
+    document.fonts.add(font);
+
+    function crescent(ctx, cx, cy, r) {
+      var m = document.createElement('canvas'); m.width = m.height = S;
+      var g = m.getContext('2d');
+      var grad = g.createLinearGradient(cx - r, cy - r, cx + r, cy + r);
+      grad.addColorStop(0, GOLD_HI); grad.addColorStop(0.5, GOLD); grad.addColorStop(1, GOLD_LO);
+      g.fillStyle = grad;
+      g.beginPath(); g.arc(cx, cy, r, 0, Math.PI * 2); g.fill();
+      g.globalCompositeOperation = 'destination-out';
+      g.beginPath(); g.arc(cx - r * 0.42, cy - r * 0.22, r * 0.86, 0, Math.PI * 2); g.fill();
+      ctx.save();
+      ctx.shadowColor = 'rgba(246, 207, 106, 0.45)'; ctx.shadowBlur = 28;
+      ctx.drawImage(m, 0, 0);
+      ctx.restore();
+    }
+
+    function star(ctx, cx, cy, r) {
+      ctx.save();
+      ctx.fillStyle = GOLD_HI; ctx.shadowColor = 'rgba(246, 207, 106, 0.6)'; ctx.shadowBlur = 14;
+      ctx.beginPath();
+      for (var i = 0; i < 10; i++) {
+        var a = -Math.PI / 2 + i * Math.PI / 5, rr = i % 2 ? r * 0.42 : r;
+        ctx[i ? 'lineTo' : 'moveTo'](cx + rr * Math.cos(a), cy + rr * Math.sin(a));
+      }
+      ctx.closePath(); ctx.fill();
+      ctx.restore();
+    }
+
+    function draw(ctx) {
+      // Graphite metal base with a diagonal brushed sheen.
+      var bg = ctx.createLinearGradient(0, 0, S * 0.3, S);
+      bg.addColorStop(0, '#6c6e74'); bg.addColorStop(0.45, '#3a3b40'); bg.addColorStop(1, '#151517');
+      ctx.fillStyle = bg; ctx.fillRect(0, 0, S, S);
+      var sheen = ctx.createLinearGradient(0, 0, S, S);
+      sheen.addColorStop(0, 'rgba(255,255,255,0.16)'); sheen.addColorStop(0.32, 'rgba(255,255,255,0)');
+      sheen.addColorStop(0.58, 'rgba(255,255,255,0.06)'); sheen.addColorStop(0.75, 'rgba(255,255,255,0)');
+      ctx.fillStyle = sheen; ctx.fillRect(0, 0, S, S);
+      // Soft warm glow behind the moon, like the glows behind the screen's glass.
+      var glow = ctx.createRadialGradient(256, 190, 10, 256, 190, 230);
+      glow.addColorStop(0, 'rgba(246, 207, 106, 0.22)'); glow.addColorStop(1, 'rgba(246, 207, 106, 0)');
+      ctx.fillStyle = glow; ctx.fillRect(0, 0, S, S);
+
+      crescent(ctx, 262, 190, 104);
+      star(ctx, 196, 168, 26);
+
+      // صلالة with kashida, white, Thmanyah Serif Display Bold.
+      ctx.save();
+      ctx.font = '128px ThmanyahDisplay'; ctx.direction = 'rtl'; ctx.textAlign = 'center';
+      ctx.fillStyle = '#ffffff'; ctx.shadowColor = 'rgba(0,0,0,0.35)'; ctx.shadowBlur = 12; ctx.shadowOffsetY = 4;
+      ctx.fillText('صلالـــة', S / 2, 430);
+      ctx.restore();
+
+      // Hairline top highlight, as on the glass panels.
+      ctx.fillStyle = 'rgba(255,255,255,0.25)'; ctx.fillRect(0, 0, S, 2);
+    }
+
+    font.load().then(function () {
+      var big = document.getElementById('c').getContext('2d');
+      draw(big);
+      document.getElementById('small').getContext('2d').drawImage(document.getElementById('c'), 0, 0);
+      if (new URLSearchParams(location.search).get('save')) {
+        return fetch('/save-icon', { method: 'POST', body: JSON.stringify({ png: document.getElementById('c').toDataURL('image/png') }) })
+          .then(function (r) { return r.json(); })
+          .then(function (j) { document.getElementById('log').textContent = 'saved ' + JSON.stringify(j); });
+      }
+    }).catch(function (e) { document.getElementById('log').textContent = 'error: ' + e; });
+  </script>
+</body>
+</html>

@@ -7,11 +7,13 @@ APP_ID = "salalahscreen"
 NAME = "شاشة صلالة"
 
 url = sys.argv[1]
-tile = {"app_id": APP_ID, "name": NAME, "url": url, "image": ""}
+# Square launcher image published next to the page (made by tools/icon.html).
+image = url.rstrip("/") + "/tile-icon.png" if url.startswith("https://") else ""
+tile = {"app_id": APP_ID, "name": NAME, "url": url, "image": image}
 webui._validate_preset(tile)  # same checks Sidee applies to its own presets
 
 session = client.Session.load()
-apps = client.add_tile(session, APP_ID, NAME, url, "")
+apps = client.add_tile(session, APP_ID, NAME, url, image)
 ok = any(client.tile_matches_request(a, APP_ID, url) for a in apps)
 print("installed" if ok else "unconfirmed", "| tiles on TV:", len(apps))
 for a in apps:

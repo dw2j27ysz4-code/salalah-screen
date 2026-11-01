@@ -37,6 +37,14 @@ createServer(async (req, res) => {
     if (req.method === 'GET' && (path === '/' || path === '/render.html')) {
       return send(res, 200, 'text/html; charset=utf-8', await readFile(join(TOOLS, 'render.html')));
     }
+    if (req.method === 'GET' && path === '/icon.html') {
+      return send(res, 200, 'text/html; charset=utf-8', await readFile(join(TOOLS, 'icon.html')));
+    }
+    if (req.method === 'POST' && path === '/save-icon') {
+      const { png } = await readBody(req);
+      await writeFile(join(PUBLIC, 'tile-icon.png'), Buffer.from(png.split(',')[1], 'base64'));
+      return send(res, 200, 'application/json', '{"ok":true}');
+    }
     if (req.method === 'GET' && path === '/label-catalog.js') {
       return send(res, 200, 'text/javascript; charset=utf-8', await readFile(join(TOOLS, 'label-catalog.js')));
     }
